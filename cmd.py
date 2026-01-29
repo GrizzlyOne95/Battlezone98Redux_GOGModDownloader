@@ -18,20 +18,28 @@ class BZModMaster:
     def __init__(self, root):
         self.root = root
         self.root.title("BZ98R Mod Engine v2.0")
-        self.root.geometry("900x700")
+        self.root.geometry("950x750")
         
-        # Internal Paths
+        # 1. Define variables first
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.bin_dir = os.path.join(self.base_dir, "bin")
         self.steamcmd_exe = os.path.join(self.bin_dir, "steamcmd.exe")
         self.cache_dir = os.path.join(self.base_dir, "workshop_cache")
-        
         self.use_physical_var = tk.BooleanVar(value=False)
         self.name_cache = {} 
+
+        # 2. Build the UI
         self.setup_ui()
+        
+        # 3. Run logic AFTER UI is ready (Safe to log now)
         self.auto_detect_gog()
 
     def setup_ui(self):
+        # Styles
+        self.style = ttk.Style()
+        self.style.configure("Danger.TButton", foreground="red", font=('TkDefaultFont', 9, 'bold'))
+        self.style.configure("Success.TButton", foreground="green", font=('TkDefaultFont', 9, 'bold'))
+
         self.tabs = ttk.Notebook(self.root)
         self.dl_tab = ttk.Frame(self.tabs)
         self.manage_tab = ttk.Frame(self.tabs)
@@ -48,8 +56,8 @@ class BZModMaster:
         
         opt_frame = ttk.Frame(self.dl_tab, padding=5)
         opt_frame.pack(fill="x")
-        ttk.Checkbutton(opt_frame, text="Physical Storage (Copy files instead of linking)", 
-                        variable=self.use_physical_var).pack(side="left", padx=10)
+        ttk.Checkbutton(opt_frame, text="Physical Storage (Copy files)", variable=self.use_physical_var).pack(side="left", padx=10)
+        ttk.Button(opt_frame, text="Launch Game", command=self.launch_game, style="Success.TButton").pack(side="right", padx=10)
 
         dl_frame = ttk.Frame(self.dl_tab, padding=10)
         dl_frame.pack(fill="x")
@@ -59,6 +67,7 @@ class BZModMaster:
         self.dl_btn = ttk.Button(dl_frame, text="Download & Install", command=self.start_download)
         self.dl_btn.pack(side="left", padx=10)
 
+        # The Log Box
         self.log_box = tk.Text(self.dl_tab, state="disabled", font=("Consolas", 9), height=15)
         self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
         self.progress = ttk.Progressbar(self.dl_tab, mode="indeterminate")
@@ -69,7 +78,8 @@ class BZModMaster:
         m_top.pack(fill="x")
         ttk.Button(m_top, text="Deactivate All", command=lambda: self.toggle_all(False)).pack(side="left", padx=2)
         ttk.Button(m_top, text="Re-enable All", command=lambda: self.toggle_all(True)).pack(side="left", padx=2)
-        ttk.Button(m_top, text="Scan Conflicts", command=self.scan_conflicts, color="red").pack(side="right", padx=2)
+        ttk.Button(m_top, text="Clean Unlinked Cache", command=self.clean_cache).pack(side="left", padx=20)
+        ttk.Button(m_top, text="Scan Conflicts", command=self.scan_conflicts, style="Danger.TButton").pack(side="right", padx=2)
 
         m_mid = ttk.Frame(self.manage_tab, padding=10)
         m_mid.pack(fill="both", expand=True)
@@ -85,128 +95,72 @@ class BZModMaster:
         ttk.Button(btn_bar, text="Open in Explorer", command=self.open_explorer).pack(side="left", padx=5)
         ttk.Button(btn_bar, text="Remove Mod", command=self.unlink_mod).pack(side="right", padx=5)
 
-    # --- QOL LOGIC ---
+    def log(self, msg):
+        """The missing method that was causing the AttributeError."""
+        self.log_box.config(state="normal")
+        self.log_box.insert("end", f"> {msg}\n")
+        self.log_box.see("end")
+        self.log_box.config(state="disabled")
 
-    def open_explorer(self):
-        selected = self.tree.selection()
-        if not selected: return
-        mod_id = self.tree.item(selected[0])['values'][1]
-        path = os.path.join(self.path_var.get(), "mods", str(mod_id))
-        if os.path.exists(path):
-            os.startfile(path)
+    def auto_detect_gog(self):
+        try:
+            access = winreg.KEY_READ | winreg.KEY_WOW64_32KEY
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, GOG_REG_PATH, 0, access)
+            path, _ = winreg.QueryValueEx(key, "path")
+            self.path_var.set(os.path.normpath(path))
+            self.log(f"GOG Path found: {path}")
+            winreg.CloseKey(key)
+        except (FileNotFoundError, OSError):
+            self.log("GOG Registry not found. Running in manual mode.")
 
-    def toggle_all(self, enable=True):
+    def launch_game(self):
+        game_path = self.path_var.get().strip()
+        exe_path = os.path.join(game_path, "battlezone98redux.exe")
+        if os.path.exists(exe_path):
+            self.log("Launching BZ98R...")
+            subprocess.Popen([exe_path], cwd=game_path)
+        else:
+            messagebox.showerror("Error", "EXE not found. Please browse for game folder.")
+
+    def clean_cache(self):
+        """Scans cache for mods NOT found in the current game mods folder."""
         mods_dir = os.path.join(self.path_var.get(), "mods")
-        if not os.path.exists(mods_dir): return
+        workshop_data_dir = os.path.join(self.cache_dir, "steamapps", "workshop", "content", BZ98R_APPID)
         
-        count = 0
-        for folder in os.listdir(mods_dir):
-            old_path = os.path.join(mods_dir, folder)
-            if enable and folder.startswith("DISABLED_"):
-                new_path = os.path.join(mods_dir, folder.replace("DISABLED_", ""))
-                os.rename(old_path, new_path)
-                count += 1
-            elif not enable and not folder.startswith("DISABLED_"):
-                new_path = os.path.join(mods_dir, f"DISABLED_{folder}")
-                os.rename(old_path, new_path)
-                count += 1
-        self.log(f"{'Enabled' if enable else 'Disabled'} {count} mods.")
-        self.refresh_list()
+        if not os.path.exists(workshop_data_dir):
+            return self.log("Cache is empty.")
+
+        active_ids = {f.replace("DISABLED_", "") for f in os.listdir(mods_dir)} if os.path.exists(mods_dir) else set()
+        cleaned_count = 0
+        
+        for cached_id in os.listdir(workshop_data_dir):
+            if cached_id not in active_ids:
+                shutil.rmtree(os.path.join(workshop_data_dir, cached_id))
+                cleaned_count += 1
+        
+        self.log(f"Cache Cleanup: Removed {cleaned_count} unlinked mod folders.")
 
     def scan_conflicts(self):
-        """Advanced BZ98R Scanner: Filenames and Material definitions."""
         mods_dir = os.path.join(self.path_var.get(), "mods")
         if not os.path.exists(mods_dir): return
-        
-        file_map = {} # filename -> [mod_ids]
-        material_map = {} # mat_name -> [mod_ids]
-        
+        file_map, material_map = {}, {}
         self.log("--- STARTING CONFLICT SCAN ---")
         for mod_id in os.listdir(mods_dir):
             if mod_id.startswith("DISABLED_"): continue
             mod_path = os.path.join(mods_dir, mod_id)
-            
             for root, _, files in os.walk(mod_path):
                 for f in files:
-                    # 1. Filename Conflict
                     file_map.setdefault(f.lower(), []).append(mod_id)
-                    
-                    # 2. Material Definition Conflict
                     if f.lower().endswith(".material"):
-                        m_path = os.path.join(root, f)
                         try:
-                            with open(m_path, 'r') as mat_file:
-                                content = mat_file.read()
-                                # Regex for Ogre material names: material Name {
-                                names = re.findall(r'material\s+([^\s{]+)', content)
-                                for n in names:
-                                    material_map.setdefault(n, []).append(mod_id)
+                            with open(os.path.join(root, f), 'r') as m:
+                                names = re.findall(r'material\s+([^\s{]+)', m.read())
+                                for n in names: material_map.setdefault(n, []).append(mod_id)
                         except: pass
-
-        # Report
-        conflicts_found = False
-        for fname, owners in file_map.items():
-            if len(owners) > 1:
-                self.log(f"FILE CONFLICT: '{fname}' found in {owners}")
-                conflicts_found = True
-        
-        for mname, owners in material_map.items():
-            if len(owners) > 1:
-                self.log(f"MATERIAL CONFLICT: '{mname}' defined in {owners}")
-                conflicts_found = True
-                
-        if not conflicts_found:
-            self.log("No conflicts detected. Fly safe, pilot.")
-        else:
-            messagebox.showwarning("Conflicts Detected", "Check logs for details. Overlapping files/materials found!")
-
-    # --- CORE METHODS (UPDATED) ---
-
-    def download_logic(self, mod_id, game_path):
-        try:
-            self.ensure_steamcmd()
-            norm_cache = os.path.normpath(self.cache_dir)
-            cmd = [self.steamcmd_exe, "+force_install_dir", norm_cache, "+login", "anonymous", 
-                   "+workshop_download_item", BZ98R_APPID, mod_id, "+quit"]
-            
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            for line in p.stdout: self.log(line.strip())
-            p.wait()
-
-            src = os.path.normpath(os.path.join(self.cache_dir, "steamapps/workshop/content", BZ98R_APPID, mod_id))
-            dst = os.path.normpath(os.path.join(game_path, "mods", mod_id))
-            
-            if os.path.exists(src):
-                if not os.path.exists(os.path.dirname(dst)): os.makedirs(os.path.dirname(dst))
-                
-                if self.use_physical_var.get():
-                    self.log("Copying files (Physical)...")
-                    if os.path.exists(dst): shutil.rmtree(dst)
-                    shutil.copytree(src, dst)
-                else:
-                    self.log("Linking files (Junction)...")
-                    if not os.path.exists(dst):
-                        subprocess.run(f'mklink /J "{dst}" "{src}"', shell=True)
-            
-            self.root.after(0, self.refresh_list)
-            messagebox.showinfo("Success", f"Mod {mod_id} installed.")
-        except Exception as e: self.log(f"Error: {e}")
-        finally:
-            self.progress.stop()
-            self.root.after(0, lambda: self.dl_btn.config(state="normal"))
-
-    # (Other helper methods browse_path, auto_detect_gog, refresh_list, get_workshop_name, ensure_steamcmd remain the same as previous)
-    def browse_path(self):
-        path = filedialog.askdirectory()
-        if path: self.path_var.set(os.path.normpath(path))
-
-    def auto_detect_gog(self):
-        try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, GOG_REG_PATH, 0, winreg.KEY_READ)
-            path, _ = winreg.QueryValueEx(key, "path")
-            self.path_var.set(os.path.normpath(path))
-            self.log(f"GOG Path found: {path}")
-        except: self.log("GOG Registry not found.")
+        conflicts = [f"FILE: '{fn}' in {o}" for fn, o in file_map.items() if len(o) > 1]
+        conflicts += [f"MAT: '{mn}' in {o}" for mn, o in material_map.items() if len(o) > 1]
+        for c in conflicts: self.log(f"CONFLICT: {c}")
+        if not conflicts: self.log("No conflicts found.")
 
     def get_workshop_name(self, mod_id):
         if mod_id in self.name_cache: return self.name_cache[mod_id]
@@ -217,59 +171,81 @@ class BZModMaster:
                 html = res.read().decode('utf-8')
                 match = re.search(r'<div class="workshopItemTitle">(.*?)</div>', html)
                 if match:
-                    name = match.group(1).strip()
-                    self.name_cache[mod_id] = name
-                    return name
+                    self.name_cache[mod_id] = match.group(1).strip()
+                    return self.name_cache[mod_id]
         except: pass
         return f"Unknown Mod ({mod_id})"
 
     def threaded_name_fetch(self, mod_id, is_disabled):
-        name = self.get_workshop_name(mod_id.replace("DISABLED_", ""))
-        status = "DISABLED" if is_disabled else "Active"
+        clean_id = mod_id.replace("DISABLED_", "")
+        name = self.get_workshop_name(clean_id)
+        status = "DISABLED" if is_disabled else ("Junction" if os.path.isjunction(os.path.join(self.path_var.get(), "mods", mod_id)) else "Physical")
         self.root.after(0, lambda: self.tree.insert("", "end", values=(name, mod_id, status)))
 
     def refresh_list(self):
         self.tree.delete(*self.tree.get_children())
-        game_path = self.path_var.get().strip()
-        mods_dir = os.path.join(game_path, "mods")
+        mods_dir = os.path.join(self.path_var.get(), "mods")
         if not os.path.exists(mods_dir): return
-
         for folder in os.listdir(mods_dir):
-            f_path = os.path.abspath(os.path.join(mods_dir, folder))
-            is_disabled = folder.startswith("DISABLED_")
-            # Show both active junctions and disabled folders
-            if os.path.isjunction(f_path) or os.path.isdir(f_path):
-                threading.Thread(target=self.threaded_name_fetch, args=(folder, is_disabled), daemon=True).start()
-
-    def unlink_mod(self):
-        selected = self.tree.selection()
-        if not selected: return
-        item = self.tree.item(selected[0])
-        mod_id = item['values'][1]
-        target = os.path.join(self.path_var.get(), "mods", str(mod_id))
-        try:
-            if os.path.isjunction(target): os.rmdir(target)
-            else: shutil.rmtree(target)
-            self.log(f"Removed: {mod_id}")
-            self.refresh_list()
-        except Exception as e: messagebox.showerror("Error", str(e))
-
-    def ensure_steamcmd(self):
-        if not os.path.exists(self.steamcmd_exe):
-            self.log("Installing SteamCMD...")
-            os.makedirs(self.bin_dir, exist_ok=True)
-            z_path = os.path.join(self.base_dir, "temp.zip")
-            urllib.request.urlretrieve(STEAMCMD_URL, z_path)
-            with zipfile.ZipFile(z_path, 'r') as z: z.extractall(self.bin_dir)
-            os.remove(z_path)
+            if os.path.isdir(os.path.join(mods_dir, folder)):
+                threading.Thread(target=self.threaded_name_fetch, args=(folder, folder.startswith("DISABLED_")), daemon=True).start()
 
     def start_download(self):
-        mid = self.mod_id_var.get().strip()
-        gp = self.path_var.get().strip()
-        if not mid.isdigit() or not os.path.exists(gp): return
-        self.dl_btn.config(state="disabled")
-        self.progress.start()
+        mid, gp = self.mod_id_var.get().strip(), self.path_var.get().strip()
+        if not mid.isdigit() or not os.path.exists(gp): return messagebox.showerror("Error", "Check path/ID")
+        self.dl_btn.config(state="disabled"); self.progress.start()
         threading.Thread(target=self.download_logic, args=(mid, gp), daemon=True).start()
+
+    def download_logic(self, mod_id, game_path):
+        try:
+            if not os.path.exists(self.steamcmd_exe):
+                self.log("Downloading SteamCMD..."); os.makedirs(self.bin_dir, exist_ok=True)
+                z = os.path.join(self.base_dir, "t.zip")
+                urllib.request.urlretrieve(STEAMCMD_URL, z)
+                with zipfile.ZipFile(z, 'r') as zf: zf.extractall(self.bin_dir)
+                os.remove(z)
+            
+            cmd = [self.steamcmd_exe, "+force_install_dir", os.path.normpath(self.cache_dir), "+login", "anonymous", "+workshop_download_item", BZ98R_APPID, mod_id, "+quit"]
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in p.stdout: self.log(line.strip())
+            p.wait()
+
+            src = os.path.normpath(os.path.join(self.cache_dir, "steamapps/workshop/content", BZ98R_APPID, mod_id))
+            dst = os.path.normpath(os.path.join(game_path, "mods", mod_id))
+            if os.path.exists(src):
+                if not os.path.exists(os.path.dirname(dst)): os.makedirs(os.path.dirname(dst))
+                if self.use_physical_var.get():
+                    if os.path.exists(dst): shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
+                else:
+                    if not os.path.exists(dst): subprocess.run(f'mklink /J "{dst}" "{src}"', shell=True)
+            self.root.after(0, self.refresh_list)
+        except Exception as e: self.log(f"Error: {e}")
+        finally:
+            self.progress.stop(); self.root.after(0, lambda: self.dl_btn.config(state="normal"))
+
+    # Helpers
+    def browse_path(self):
+        p = filedialog.askdirectory()
+        if p: self.path_var.set(os.path.normpath(p))
+    def open_explorer(self):
+        sel = self.tree.selection()
+        if sel: os.startfile(os.path.join(self.path_var.get(), "mods", self.tree.item(sel[0])['values'][1]))
+    def toggle_all(self, e):
+        m = os.path.join(self.path_var.get(), "mods")
+        if not os.path.exists(m): return
+        for f in os.listdir(m):
+            p = os.path.join(m, f)
+            if e and f.startswith("DISABLED_"): os.rename(p, os.path.join(m, f[9:]))
+            elif not e and not f.startswith("DISABLED_"): os.rename(p, os.path.join(m, f"DISABLED_{f}"))
+        self.refresh_list()
+    def unlink_mod(self):
+        sel = self.tree.selection()
+        if not sel: return
+        t = os.path.join(self.path_var.get(), "mods", self.tree.item(sel[0])['values'][1])
+        if os.path.isjunction(t): os.rmdir(t)
+        else: shutil.rmtree(t)
+        self.refresh_list()
 
 if __name__ == "__main__":
     root = tk.Tk()
