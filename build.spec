@@ -14,7 +14,7 @@ a = Analysis(
     ['cmd.py'],
     pathex=[],
     binaries=binaries,
-    datas=datas,
+    datas=datas + [('bzone.ttf', '.'), ('modman.ico', '.')],
     hiddenimports=hiddenimports + ['PIL.Image', 'PIL.ImageTk'],
     hookspath=[],
     hooksconfig={},
@@ -48,5 +48,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version='file_version_info.txt',
-    icon=None, 
+    icon='modman.ico', 
 )

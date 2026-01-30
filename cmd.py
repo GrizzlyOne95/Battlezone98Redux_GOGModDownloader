@@ -72,13 +72,26 @@ class BZModMaster:
         self.root.geometry("1150x850")
         self.root.configure(bg=BZ_BG)
         
-        self.custom_font_name = "BZONE" if os.path.exists("bzone.ttf") else "Consolas"
-        
         if getattr(sys, 'frozen', False):
             self.base_dir = os.path.dirname(sys.executable)
+            self.resource_dir = sys._MEIPASS
         else:
             self.base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.resource_dir = self.base_dir
             
+        font_path = os.path.join(self.resource_dir, "bzone.ttf")
+        if os.path.exists(font_path):
+            self.custom_font_name = "BZONE"
+            try: ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
+            except: pass
+        else:
+            self.custom_font_name = "Consolas"
+
+        icon_path = os.path.join(self.resource_dir, "modman.ico")
+        if os.path.exists(icon_path):
+            try: self.root.iconbitmap(icon_path)
+            except: pass
+
         self.bin_dir = os.path.join(self.base_dir, "bin")
         self.config = self.load_config()
         

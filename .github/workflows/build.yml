@@ -45,3 +45,12 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: dist/BZ98R_ModManager.exe
+
+    - name: Update Nightly Release
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: nightly
+        name: Nightly Build
+        prerelease: true
+        files: dist/BZ98R_ModManager.exe
