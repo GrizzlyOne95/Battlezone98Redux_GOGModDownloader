@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import json
 import shutil
@@ -72,7 +73,12 @@ class BZModMaster:
         self.root.configure(bg=BZ_BG)
         
         self.custom_font_name = "BZONE" if os.path.exists("bzone.ttf") else "Consolas"
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        if getattr(sys, 'frozen', False):
+            self.base_dir = os.path.dirname(sys.executable)
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+            
         self.bin_dir = os.path.join(self.base_dir, "bin")
         self.config = self.load_config()
         
