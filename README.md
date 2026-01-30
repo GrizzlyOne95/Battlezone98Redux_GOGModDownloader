@@ -2,9 +2,11 @@
 
 A tool to download and manage Steam Workshop mods for non-Steam versions of Battlezone 98 Redux.
 
-<img width="1152" height="882" alt="image" src="https://github.com/user-attachments/assets/e8a8766e-e375-4fa7-89df-5ce66886f4ae" />
+<img width="1152" height="882" alt="image" src="https://github.com/user-attachments/assets/96ce052b-9391-4829-b358-eb26496fe3e8" />
 
-<img width="1152" height="882" alt="image" src="https://github.com/user-attachments/assets/ee798aa0-df0f-42b9-9a5a-0068b9c6a2cf" />
+<img width="1152" height="882" alt="image" src="https://github.com/user-attachments/assets/fb06ae01-2f95-4a86-8e69-e3dec221b72b" />
+
+
 
 ## Features
 *   **Steam Workshop Integration**: Downloads mods using SteamCMD.
