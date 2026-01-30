@@ -31,3 +31,6 @@ A tool to download and manage Steam Workshop mods for non-Steam versions of Batt
 
 ## Installation
 *   **Source**: Install dependencies (`pip install Pillow tkinterdnd2`) and run `cmd.py`.
+
+## Troubleshooting
+   **Windows SmartScreen**: If Windows blocks the app, click **More info** → **Run anyway**. This occurs because the executable is not digitally signed.
