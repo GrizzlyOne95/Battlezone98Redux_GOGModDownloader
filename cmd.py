@@ -119,18 +119,32 @@ class BZModMaster:
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
-                with open(CONFIG_FILE, 'r') as f: return json.load(f)
+                with open(CONFIG_FILE, 'r') as f: 
+                    data = json.load(f)
+                    # Convert relative paths back to absolute
+                    for key in ["game_path", "steamcmd_path", "cache_path"]:
+                        if key in data and data[key] and not os.path.isabs(data[key]):
+                            data[key] = os.path.normpath(os.path.join(self.base_dir, data[key]))
+                    return data
             except: return {}
         return {}
 
     def save_config(self, *args):
+        def make_rel(path):
+            if not path: return ""
+            try:
+                if os.path.splitdrive(path)[0].lower() == os.path.splitdrive(self.base_dir)[0].lower():
+                    return os.path.relpath(path, self.base_dir)
+            except: pass
+            return path
+
         config = {
-            "game_path": self.path_var.get(),
-            "steamcmd_path": self.steamcmd_var.get(),
-            "cache_path": self.cache_var.get(),
+            "game_path": make_rel(self.path_var.get()),
+            "steamcmd_path": make_rel(self.steamcmd_var.get()),
+            "cache_path": make_rel(self.cache_var.get()),
             "use_physical": self.use_physical_var.get()
         }
-        with open(CONFIG_FILE, 'w') as f: json.dump(config, f)
+        with open(CONFIG_FILE, 'w') as f: json.dump(config, f, indent=4)
 
     def setup_ui(self):
         style = ttk.Style()
@@ -486,7 +500,35 @@ class BZModMaster:
                 raise e
 
     def check_admin(self):
-        if not ctypes.windll.shell32.IsUserAnAdmin(): self.log("NOTICE: Non-Admin mode detected.", "error")
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            self.log("NOTICE: Non-Admin mode detected.", "error")
+            self.show_admin_warning()
+
+    def show_admin_warning(self):
+        self.admin_frame = tk.Frame(self.dl_tab, bg="#330000", pady=2)
+        children = self.dl_tab.winfo_children()
+        if children:
+            self.admin_frame.pack(side="top", fill="x", padx=10, pady=(5,0), before=children[0])
+        else:
+            self.admin_frame.pack(side="top", fill="x", padx=10, pady=5)
+            
+        lbl = tk.Label(self.admin_frame, text="⚠ ADMIN RIGHTS REQUIRED FOR SYMLINKS", 
+                       bg="#330000", fg="#ff5555", font=("Consolas", 10, "bold"))
+        lbl.pack(side="left", padx=10)
+        
+        btn = ttk.Button(self.admin_frame, text="RELAUNCH AS ADMIN", command=self.relaunch_admin)
+        btn.pack(side="right", padx=5, pady=2)
+        ToolTip(lbl, "Windows requires Administrator privileges to create 'Junction' links.\nWithout this, mods cannot be linked to the game folder.")
+
+    def relaunch_admin(self):
+        try:
+            if getattr(sys, 'frozen', False):
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, "", None, 1)
+            else:
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{os.path.abspath(sys.argv[0])}"', None, 1)
+            self.root.destroy()
+        except Exception as e:
+            self.log(f"Relaunch failed: {e}", "error")
 
     def browse_game(self): 
         p = filedialog.askdirectory()
