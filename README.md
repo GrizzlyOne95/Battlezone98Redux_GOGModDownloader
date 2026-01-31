@@ -1,6 +1,6 @@
-# Battlezone 98 Redux - GOG Mod Downloader
+# Battlezone - Mod Engine
 
-A tool to download and manage Steam Workshop mods for non-Steam versions of Battlezone 98 Redux.
+A tool to download and manage Steam Workshop mods for non-Steam versions of Battlezone 98 Redux or Battlezone Combat Commander.
 
 <img width="1152" height="882" alt="image" src="https://github.com/user-attachments/assets/96ce052b-9391-4829-b358-eb26496fe3e8" />
 
