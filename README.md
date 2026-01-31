@@ -1,4 +1,4 @@
-# Battlezone - Mod Engine
+# Battlezone Mod Engine
 
 A tool to download and manage Steam Workshop mods for non-Steam versions of Battlezone 98 Redux or Battlezone Combat Commander.
 
@@ -10,14 +10,14 @@ A tool to download and manage Steam Workshop mods for non-Steam versions of Batt
 
 ## Features
 *   **Steam Workshop Integration**: Downloads mods using SteamCMD.
+*   **Multi-Game Support**: Supports both **Battlezone 98 Redux** and **Battlezone Combat Commander**.
 *   **Mod Management**: Enable, disable, update, or delete mods via a GUI.
 *   **Smart Linking**: Uses Windows Junctions to link mods to the game folder without duplicating files.
 *   **Auto-Detection**: Locates GOG installations and SteamCMD automatically.
 
 ## Requirements
 *   Windows 10/11
-*   Battlezone 98 Redux
-*   Python 3.x (if running from source)
+*   Battlezone 98 Reduxing from source)
 
 ## Usage
 1.  Run the application as Administrator (required for creating Junction links).

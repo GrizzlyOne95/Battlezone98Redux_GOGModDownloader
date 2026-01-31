@@ -29,22 +29,15 @@ except ImportError:
     HAS_DND = False
 
 # --- CONFIGURATION ---
-BZ98R_APPID = "301650"
-GOG_REG_IDS = ["1454067812", "1459427445"]
 STEAMCMD_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
-CONFIG_FILE = "bz98r_mod_config.json"
-
-# --- BATTLEZONE HUD COLORS ---
-BZ_BG = "#0a0a0a"
-BZ_FG = "#d4d4d4"
-BZ_GREEN = "#00ff00"
-BZ_DARK_GREEN = "#004400"
-BZ_CYAN = "#00ffff"
+CONFIG_FILE = "bz_mod_config.json"
 
 class ToolTip:
-    def __init__(self, widget, text):
+    def __init__(self, widget, text, bg="#1a1a1a", fg="#00ffff"):
         self.widget = widget
         self.text = text
+        self.bg = bg
+        self.fg = fg
         self.tip_window = None
         widget.bind("<Enter>", self.show_tip)
         widget.bind("<Leave>", self.hide_tip)
@@ -56,7 +49,7 @@ class ToolTip:
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
         label = tk.Label(tw, text=self.text, justify='left',
-                       background="#1a1a1a", foreground=BZ_CYAN, 
+                       background=self.bg, foreground=self.fg, 
                        relief='solid', borderwidth=1, font=("Consolas", "9"))
         label.pack(ipadx=1)
 
@@ -68,9 +61,8 @@ class ToolTip:
 class BZModMaster:
     def __init__(self, root):
         self.root = root
-        self.root.title("BZ98R Mod Manager")
+        self.root.title("Battlezone Mod Engine")
         self.root.geometry("1150x850")
-        self.root.configure(bg=BZ_BG)
         
         if getattr(sys, 'frozen', False):
             self.base_dir = os.path.dirname(sys.executable)
@@ -78,14 +70,37 @@ class BZModMaster:
         else:
             self.base_dir = os.path.dirname(os.path.abspath(__file__))
             self.resource_dir = self.base_dir
-            
-        font_path = os.path.join(self.resource_dir, "bzone.ttf")
-        if os.path.exists(font_path):
-            self.custom_font_name = "BZONE"
-            try: ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
-            except: pass
-        else:
-            self.custom_font_name = "Consolas"
+
+        # --- GAME DEFINITIONS ---
+        self.games = {
+            "BZ98R": {
+                "name": "Battlezone 98 Redux",
+                "appid": "301650",
+                "exe": "battlezone98redux.exe",
+                "font_file": "BZONE.ttf",
+                "font_name": "BZONE",
+                "icon_file": "bz98.png",
+                "colors": {
+                    "bg": "#0a0a0a", "fg": "#d4d4d4",
+                    "highlight": "#00ff00", "dark_highlight": "#004400", "accent": "#00ffff"
+                }
+            },
+            "BZCC": {
+                "name": "Battlezone Combat Commander",
+                "appid": "624970",
+                "exe": "battlezone2.exe",
+                "font_file": "BGM.ttf",
+                "font_name": "BankGothic",
+                "icon_file": "bz2.png",
+                "colors": {
+                    "bg": "#0a0a0a", "fg": "#d4d4d4",
+                    "highlight": "#00aaff", "dark_highlight": "#002244", "accent": "#88ccff"
+                }
+            }
+        }
+
+        self.load_custom_fonts()
+        self.load_game_icons()
 
         icon_path = os.path.join(self.resource_dir, "modman.ico")
         if os.path.exists(icon_path):
@@ -95,8 +110,21 @@ class BZModMaster:
         self.bin_dir = os.path.join(self.base_dir, "bin")
         self.config = self.load_config()
         
+        # Determine active game
+        self.current_game_key = self.config.get("last_game", "BZ98R")
+        if self.current_game_key not in self.games: self.current_game_key = "BZ98R"
+        
+        self.apply_theme_vars()
+        self.root.configure(bg=self.colors["bg"])
+
         self.use_physical_var = tk.BooleanVar(value=self.config.get("use_physical", False))
-        self.path_var = tk.StringVar(value=self.config.get("game_path", ""))
+        
+        # Load game-specific path or fallback to legacy global path
+        saved_path = self.config.get(f"path_{self.current_game_key}", "")
+        if not saved_path and self.current_game_key == "BZ98R":
+            saved_path = self.config.get("game_path", "")
+            
+        self.path_var = tk.StringVar(value=saved_path)
         self.steamcmd_var = tk.StringVar(value=self.config.get("steamcmd_path", ""))
         self.cache_var = tk.StringVar(value=self.config.get("cache_path", os.path.join(self.base_dir, "workshop_cache")))
         
@@ -116,13 +144,41 @@ class BZModMaster:
         if not self.steamcmd_var.get(): self.auto_detect_steamcmd()
         threading.Thread(target=self.initialize_engine, daemon=True).start()
 
+    def load_custom_fonts(self):
+        self.available_fonts = []
+        for key, g in self.games.items():
+            font_path = os.path.join(self.resource_dir, g["font_file"])
+            if os.path.exists(font_path):
+                try: 
+                    # Check return value: > 0 means success
+                    if ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0) > 0:
+                        self.available_fonts.append(g["font_name"])
+                except: pass
+
+    def load_game_icons(self):
+        self.game_icons = {}
+        if not HAS_PIL: return
+        for key, g in self.games.items():
+            try:
+                p = os.path.join(self.resource_dir, g["icon_file"])
+                if os.path.exists(p):
+                    img = Image.open(p).resize((48, 48), Image.Resampling.LANCZOS)
+                    self.game_icons[key] = ImageTk.PhotoImage(img)
+            except: pass
+
+    def apply_theme_vars(self):
+        g = self.games[self.current_game_key]
+        self.colors = g["colors"]
+        # Fallback to Consolas if custom font didn't load
+        self.current_font = g["font_name"] if g["font_name"] in self.available_fonts else "Consolas"
+
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as f: 
                     data = json.load(f)
                     # Convert relative paths back to absolute
-                    for key in ["game_path", "steamcmd_path", "cache_path"]:
+                    for key in ["game_path", "steamcmd_path", "cache_path", "path_BZ98R", "path_BZCC"]:
                         if key in data and data[key] and not os.path.isabs(data[key]):
                             data[key] = os.path.normpath(os.path.join(self.base_dir, data[key]))
                     return data
@@ -138,37 +194,26 @@ class BZModMaster:
             except: pass
             return path
 
-        config = {
-            "game_path": make_rel(self.path_var.get()),
-            "steamcmd_path": make_rel(self.steamcmd_var.get()),
-            "cache_path": make_rel(self.cache_var.get()),
-            "use_physical": self.use_physical_var.get()
-        }
-        with open(CONFIG_FILE, 'w') as f: json.dump(config, f, indent=4)
+        # Update current game path in config before saving
+        self.config[f"path_{self.current_game_key}"] = self.path_var.get()
+        self.config["last_game"] = self.current_game_key
+        self.config["steamcmd_path"] = self.steamcmd_var.get()
+        self.config["cache_path"] = self.cache_var.get()
+        self.config["use_physical"] = self.use_physical_var.get()
+
+        # Convert paths to relative for storage
+        storage_config = self.config.copy()
+        for k, v in storage_config.items():
+            if "path" in k and isinstance(v, str):
+                storage_config[k] = make_rel(v)
+
+        with open(CONFIG_FILE, 'w') as f: json.dump(storage_config, f, indent=4)
 
     def setup_ui(self):
         style = ttk.Style()
         style.theme_use('default')
-        main_font = (self.custom_font_name, 10)
-        bold_font = (self.custom_font_name, 11, "bold")
-
-        # --- GLOBAL STYLES ---
-        style.configure(".", background=BZ_BG, foreground=BZ_FG, font=main_font, bordercolor=BZ_DARK_GREEN)
-        style.configure("TFrame", background=BZ_BG)
-        style.configure("TNotebook", background=BZ_BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background="#1a1a1a", foreground=BZ_FG, padding=[10, 2])
-        style.map("TNotebook.Tab", background=[("selected", BZ_DARK_GREEN)], foreground=[("selected", BZ_GREEN)])
-        style.configure("TLabelframe", background=BZ_BG, bordercolor=BZ_GREEN)
-        style.configure("TLabelframe.Label", background=BZ_BG, foreground=BZ_GREEN, font=bold_font)
-        style.configure("TLabel", background=BZ_BG, foreground=BZ_FG)
-        style.configure("TEntry", fieldbackground="#1a1a1a", foreground=BZ_CYAN, insertcolor=BZ_GREEN)
-        style.configure("BZ.Horizontal.TProgressbar", thickness=15, background=BZ_GREEN, troughcolor="#050505")
-        style.configure("TButton", background="#1a1a1a", foreground=BZ_FG)
-        style.map("TButton", background=[("active", BZ_DARK_GREEN)], foreground=[("active", BZ_GREEN)])
-        style.configure("Success.TButton", foreground=BZ_GREEN, font=bold_font)
         
-        style.configure("Treeview", background="#0a0a0a", foreground=BZ_FG, fieldbackground="#0a0a0a", rowheight=40)
-        style.map("Treeview", background=[("selected", BZ_CYAN)], foreground=[("selected", "#000000")])
+        self.update_styles(style)
 
         # --- TABS MAIN STRUCTURE ---
         self.tabs = ttk.Notebook(self.root)
@@ -187,10 +232,31 @@ class BZModMaster:
         cfg = ttk.LabelFrame(self.dl_tab, text=" SYSTEM CONFIGURATION ", padding=10)
         cfg.pack(fill="x", padx=10, pady=5)
         
+        # Game Switcher Row
+        game_row = ttk.Frame(cfg)
+        game_row.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        ttk.Label(game_row, text="TARGET GAME:", font=(self.current_font, 12, "bold")).pack(side="left")
+        
+        game_names = [g["name"] for g in self.games.values()]
+        self.game_selector = ttk.Combobox(game_row, values=game_names, state="readonly", width=40)
+        
+        target_name = self.games[self.current_game_key]["name"]
+        if target_name in game_names:
+            self.game_selector.current(game_names.index(target_name))
+        else:
+            self.game_selector.current(0)
+            
+        self.game_selector.pack(side="left", padx=10)
+        self.game_selector.bind("<<ComboboxSelected>>", self.switch_game)
+
+        self.icon_label = tk.Label(game_row, bg=self.colors["bg"])
+        self.icon_label.pack(side="left", padx=5)
+        self.update_game_icon()
+
         # Path Rows
         paths = [
             ("Game Path:", self.path_var, self.browse_game, "path_entry", 
-             "Where your battlezone98redux program is installed."),
+             "Where the game executable is installed."),
             ("SteamCMD:", self.steamcmd_var, self.browse_steamcmd, "steamcmd_entry", 
              "If you have SteamCMD installed, point to it here.\nIf you aren't sure you can leave it default or choose a new location."),
             ("Mod Cache:", self.cache_var, self.browse_cache, "cache_entry", 
@@ -198,14 +264,15 @@ class BZModMaster:
         ]
 
         for i, (txt, var, cmd, attr, tip) in enumerate(paths):
-            ttk.Label(cfg, text=txt).grid(row=i, column=0, sticky="w")
-            h_lbl = tk.Label(cfg, text="?", width=2, bg="#222", fg=BZ_CYAN, font=("Consolas", 8, "bold"), cursor="hand2")
-            h_lbl.grid(row=i, column=1, padx=(0, 5))
-            ToolTip(h_lbl, tip)
+            row_idx = i + 1
+            ttk.Label(cfg, text=txt).grid(row=row_idx, column=0, sticky="w")
+            h_lbl = tk.Label(cfg, text="?", width=2, bg="#222", fg=self.colors['accent'], font=("Consolas", 8, "bold"), cursor="hand2")
+            h_lbl.grid(row=row_idx, column=1, padx=(0, 5))
+            ToolTip(h_lbl, tip, bg="#1a1a1a", fg=self.colors['accent'])
             ent = ttk.Entry(cfg, textvariable=var)
-            ent.grid(row=i, column=2, sticky="ew", padx=5)
-            setattr(self, attr, ent) # Dynamically set self.path_entry, etc.
-            ttk.Button(cfg, text="BROWSE", width=10, command=cmd).grid(row=i, column=3, pady=2)
+            ent.grid(row=row_idx, column=2, sticky="ew", padx=5)
+            setattr(self, attr, ent) 
+            ttk.Button(cfg, text="BROWSE", width=10, command=cmd).grid(row=row_idx, column=3, pady=2)
         cfg.columnconfigure(2, weight=1)
 
         # Mod Queue (Preview & Input)
@@ -213,9 +280,10 @@ class BZModMaster:
         prev.pack(fill="x", padx=10, pady=5)
         
         thumb_container = tk.Frame(prev, bg="#050505", width=150, height=150, 
-                                 highlightthickness=1, highlightbackground=BZ_DARK_GREEN)
+                                 highlightthickness=1, highlightbackground=self.colors['dark_highlight'])
         thumb_container.pack(side="left", padx=10)
         thumb_container.pack_propagate(False)
+        self.thumb_container = thumb_container # Ref for theme update
 
         self.thumb_label = tk.Label(thumb_container, bg="#050505")
         self.thumb_label.pack(expand=True, fill="both")
@@ -223,10 +291,10 @@ class BZModMaster:
         info_frame = ttk.Frame(prev)
         info_frame.pack(side="left", fill="both", expand=True)
         
-        self.mod_name_label = ttk.Label(info_frame, text="READY FOR COMMAND", foreground=BZ_CYAN, font=bold_font)
+        self.mod_name_label = ttk.Label(info_frame, text="READY FOR COMMAND", foreground=self.colors['accent'], font=(self.current_font, 11, "bold"))
         self.mod_name_label.pack(anchor="w", pady=(0, 5))
         
-        ttk.Label(info_frame, text="MOD URL OR ID:", font=(self.custom_font_name, 8)).pack(anchor="w")
+        ttk.Label(info_frame, text="MOD URL OR ID:", font=(self.current_font, 8)).pack(anchor="w")
         self.mod_entry = ttk.Entry(info_frame, textvariable=self.mod_id_var)
         self.mod_entry.pack(fill="x", pady=5)
         
@@ -245,16 +313,16 @@ class BZModMaster:
         self.stop_btn.pack(side="left", padx=5)
 
         # HUD Log
-        ttk.Label(self.dl_tab, text=" HUD LOG ", foreground=BZ_GREEN, font=bold_font).pack(anchor="w", padx=10)
-        self.log_box = tk.Text(self.dl_tab, state="disabled", font=("Consolas", 10), bg="#050505", fg=BZ_FG, height=12)
+        ttk.Label(self.dl_tab, text=" HUD LOG ", foreground=self.colors['highlight'], font=(self.current_font, 11, "bold")).pack(anchor="w", padx=10)
+        self.log_box = tk.Text(self.dl_tab, state="disabled", font=("Consolas", 10), bg="#050505", fg=self.colors['fg'], height=12)
         self.log_box.pack(fill="both", expand=True, padx=10, pady=5)
         
         # Log tags
         self.log_box.tag_config("timestamp", foreground="#444444")
-        self.log_box.tag_config("success", foreground=BZ_GREEN)
+        self.log_box.tag_config("success", foreground=self.colors['highlight'])
         self.log_box.tag_config("warning", foreground="#ffff44")
         self.log_box.tag_config("error", foreground="#ff4444")
-        self.log_box.tag_config("info", foreground=BZ_CYAN)
+        self.log_box.tag_config("info", foreground=self.colors['accent'])
 
         self.progress = ttk.Progressbar(self.dl_tab, style="BZ.Horizontal.TProgressbar", mode="determinate")
         self.progress.pack(fill="x", padx=10, pady=10)
@@ -272,7 +340,7 @@ class BZModMaster:
         for col in ["Name", "ID", "Status", "Version", "Date"]: 
             self.tree.heading(col, text=col.upper(), command=lambda c=col: self.sort_tree(c, False))
             self.tree.column(col, anchor="center", width=100)
-        self.tree.column("Name", width=250) # Give the name column more room
+        self.tree.column("Name", width=250) 
         
         self.tree.pack(fill="both", expand=True, padx=10, pady=10)
         self.tree.bind("<Button-3>", self.show_mod_menu)
@@ -285,13 +353,96 @@ class BZModMaster:
         ttk.Button(manage_ctrl, text="UPDATE ALL", command=self.update_all_mods).pack(side="right")
 
         # Context Menu
-        self.mod_menu = tk.Menu(self.root, tearoff=0, bg="#1a1a1a", fg=BZ_FG)
+        self.mod_menu = tk.Menu(self.root, tearoff=0, bg="#1a1a1a", fg=self.colors['fg'])
         self.mod_menu.add_command(label="ENABLE (LINK)", command=self.enable_mod)
         self.mod_menu.add_command(label="DISABLE (UNLINK)", command=self.disable_mod)
         self.mod_menu.add_separator()
         self.mod_menu.add_command(label="UPDATE MOD", command=lambda: self.update_selected_mod(force=False))
         self.mod_menu.add_command(label="FORCE UPDATE", command=lambda: self.update_selected_mod(force=True))
         self.mod_menu.add_command(label="DELETE FROM DISK", command=self.delete_mod_physically)
+
+        self.update_tree_tags()
+
+    def update_styles(self, style):
+        main_font = (self.current_font, 10)
+        bold_font = (self.current_font, 11, "bold")
+        c = self.colors
+
+        # --- GLOBAL STYLES ---
+        style.configure(".", background=c["bg"], foreground=c["fg"], font=main_font, bordercolor=c["dark_highlight"])
+        style.configure("TFrame", background=c["bg"])
+        style.configure("TNotebook", background=c["bg"], borderwidth=0)
+        style.configure("TNotebook.Tab", background="#1a1a1a", foreground=c["fg"], padding=[10, 2])
+        style.map("TNotebook.Tab", background=[("selected", c["dark_highlight"])], foreground=[("selected", c["highlight"])])
+        style.configure("TLabelframe", background=c["bg"], bordercolor=c["highlight"])
+        style.configure("TLabelframe.Label", background=c["bg"], foreground=c["highlight"], font=bold_font)
+        style.configure("TLabel", background=c["bg"], foreground=c["fg"])
+        style.configure("TEntry", fieldbackground="#1a1a1a", foreground=c["accent"], insertcolor=c["highlight"])
+        style.configure("BZ.Horizontal.TProgressbar", thickness=15, background=c["highlight"], troughcolor="#050505")
+        style.configure("TButton", background="#1a1a1a", foreground=c["fg"])
+        style.map("TButton", background=[("active", c["dark_highlight"])], foreground=[("active", c["highlight"])])
+        style.configure("Success.TButton", foreground=c["highlight"], font=bold_font)
+        
+        style.configure("Treeview", background="#0a0a0a", foreground=c["fg"], fieldbackground="#0a0a0a", rowheight=40)
+        style.map("Treeview", background=[("selected", c["accent"])], foreground=[("selected", "#000000")])
+
+    def update_game_icon(self):
+        if not hasattr(self, 'icon_label'): return
+        c = self.colors
+        icon = self.game_icons.get(self.current_game_key)
+        
+        if icon:
+            self.icon_label.config(image=icon, bg=c["bg"], highlightbackground=c["highlight"], highlightthickness=1, bd=0)
+            self.icon_label.image = icon
+        else:
+            self.icon_label.config(image="", width=0, bd=0, highlightthickness=0)
+
+    def update_tree_tags(self):
+        c = self.colors
+        self.tree.tag_configure('active', foreground=c['highlight'])
+        self.tree.tag_configure('inactive', foreground="#666666")
+
+    def switch_game(self, event=None):
+        selected_name = self.game_selector.get()
+        
+        # Find key by name
+        new_key = next((k for k, v in self.games.items() if v["name"] == selected_name), "BZ98R")
+        
+        if new_key == self.current_game_key: return
+        
+        # Save current state
+        self.save_config()
+        
+        # Switch
+        self.current_game_key = new_key
+        self.apply_theme_vars()
+        
+        # Update Path Var
+        saved_path = self.config.get(f"path_{self.current_game_key}", "")
+        self.path_var.set(saved_path)
+        
+        # Update UI Styles
+        style = ttk.Style()
+        self.update_styles(style)
+        
+        # Update Manual Widgets
+        c = self.colors
+        self.root.configure(bg=c["bg"])
+        self.log_box.configure(fg=c["fg"])
+        self.log_box.tag_config("success", foreground=c['highlight'])
+        self.log_box.tag_config("info", foreground=c['accent'])
+        
+        self.mod_name_label.configure(foreground=c['accent'], font=(self.current_font, 11, "bold"))
+        self.thumb_container.configure(highlightbackground=c['dark_highlight'])
+        self.mod_menu.configure(fg=c['fg'])
+        
+        self.update_tree_tags()
+        self.update_game_icon()
+        
+        self.log(f"Switched to {self.games[new_key]['name']}", "info")
+        self.initialize_engine()
+        self.refresh_list()
+        self.save_config()
 
     def log(self, message, tag=None):
         self.root.after(0, lambda: self._log_impl(message, tag))
@@ -348,7 +499,7 @@ class BZModMaster:
         self.dl_btn.config(state="disabled", text="ENGINE ACTIVE")
         self.progress.config(mode="indeterminate")
         self.progress.start(10)
-        self.progress_label.config(text="INITIALIZING...", fg=BZ_CYAN)
+        self.progress_label.config(text="INITIALIZING...", fg=self.colors['accent'])
         self.start_task()
         
         sc_path = self.steamcmd_var.get()
@@ -360,9 +511,10 @@ class BZModMaster:
 
     def download_logic(self, mod_id, sc_path, cache_path, game_path, use_physical):
         try:
+            current_appid = self.games[self.current_game_key]["appid"]
             final_sc_path = self.ensure_steamcmd(sc_path)
             cache = os.path.abspath(cache_path)
-            mod_path = os.path.join(cache, "steamapps/workshop/content", BZ98R_APPID, mod_id)
+            mod_path = os.path.join(cache, "steamapps/workshop/content", current_appid, mod_id)
             
             if os.path.exists(mod_path):
                 self.log(f"Mod {mod_id} detected. Checking for updates...", "warning")
@@ -371,7 +523,7 @@ class BZModMaster:
 
             # FIX: force_install_dir BEFORE login
             cmd = [final_sc_path, "+force_install_dir", cache, "+login", "anonymous",
-                   "+workshop_download_item", BZ98R_APPID, mod_id, "+quit"]
+                   "+workshop_download_item", current_appid, mod_id, "+quit"]
             
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             self.active_processes.append(p)
@@ -432,11 +584,12 @@ class BZModMaster:
             with urllib.request.urlopen(req) as r:
                 html = r.read().decode('utf-8')
                 
-                # VALIDATION: Check for Battlezone 98 Redux App ID (301650)
+                # VALIDATION: Check for Current Game App ID
+                target_appid = self.games[self.current_game_key]["appid"]
                 app_match = re.search(r'steamcommunity\.com/app/(\d+)', html)
                 current_app = app_match.group(1) if app_match else None
                 
-                if current_app and current_app != BZ98R_APPID:
+                if current_app and current_app != target_appid:
                     self.is_valid_mod = False
                     self.root.after(0, lambda: self.mod_name_label.config(text="INVALID GAME DETECTED", foreground="#ff0000"))
                     return
@@ -447,7 +600,7 @@ class BZModMaster:
                 if not thumb: thumb = re.search(r'<link rel="image_src" href="([^"]+)">', html)
                 title = name.group(1).strip() if name else f"ID: {mid}"
                 
-                self.root.after(0, lambda: self.mod_name_label.config(text=title, foreground=BZ_CYAN))
+                self.root.after(0, lambda: self.mod_name_label.config(text=title, foreground=self.colors['accent']))
                 if HAS_PIL and thumb:
                     with urllib.request.urlopen(thumb.group(1)) as i:
                         img = Image.open(BytesIO(i.read())).resize((150, 150), Image.Resampling.LANCZOS)
@@ -465,16 +618,17 @@ class BZModMaster:
         return match.group(1) if match else (input_str.strip() if input_str.strip().isdigit() else None)
 
     def initialize_engine(self):
-        self.log("BZ98R Mod Manager Initializing...", "info")
+        game_name = self.games[self.current_game_key]["name"]
+        self.log(f"{game_name} Engine Initializing...", "info")
         
         # Check Game Path - Logic adjusted for your test environment
-        game_exe = os.path.join(self.path_var.get(), "battlezone98redux.exe")
+        game_exe = os.path.join(self.path_var.get(), self.games[self.current_game_key]["exe"])
         if not os.path.exists(game_exe):
             self.log("NOTICE: Executable not found. Running in Virtual/Test mode.", "warning")
             self.path_entry.configure(foreground="#ffff44") # Yellow for "Mock Mode"
         else:
             self.log(f"System Link Established: {game_exe}", "success")
-            self.path_entry.configure(foreground=BZ_CYAN)
+            self.path_entry.configure(foreground=self.colors['accent'])
         
         # Check SteamCMD
         if not os.path.exists(self.steamcmd_var.get()):
@@ -540,7 +694,7 @@ class BZModMaster:
         p = filedialog.askdirectory()
         if p:
             self.path_var.set(os.path.normpath(p))
-            self.path_entry.configure(foreground=BZ_CYAN) # Reset color
+            self.path_entry.configure(foreground=self.colors['accent']) # Reset color
             self.save_config()
             self.log(f"Game path updated: {p}", "success")
 
@@ -551,7 +705,7 @@ class BZModMaster:
             p = filedialog.askopenfilename(filetypes=[("Executable", "steamcmd.exe"), ("All Executables", "*.exe")])
             if p:
                 self.steamcmd_var.set(os.path.normpath(p))
-                self.steamcmd_entry.configure(foreground=BZ_CYAN)
+                self.steamcmd_entry.configure(foreground=self.colors['accent'])
                 self.save_config()
                 self.log(f"SteamCMD path updated: {p}", "success")
         else:
@@ -559,7 +713,7 @@ class BZModMaster:
             if p:
                 target = os.path.join(p, "steamcmd.exe")
                 self.steamcmd_var.set(os.path.normpath(target))
-                self.steamcmd_entry.configure(foreground=BZ_CYAN)
+                self.steamcmd_entry.configure(foreground=self.colors['accent'])
                 self.save_config()
                 self.log(f"SteamCMD will be installed to: {p}", "info")
     def browse_cache(self): 
@@ -579,7 +733,8 @@ class BZModMaster:
         game_path = os.path.abspath(self.path_var.get())
         
         # SteamCMD nested structure for BZ98R
-        content_dir = os.path.join(base_cache, "steamapps", "workshop", "content", BZ98R_APPID)
+        current_appid = self.games[self.current_game_key]["appid"]
+        content_dir = os.path.join(base_cache, "steamapps", "workshop", "content", current_appid)
         game_mods_dir = os.path.join(game_path, "mods")
 
         # 1. Path Safety Check
@@ -620,9 +775,7 @@ class BZModMaster:
             # Fire off the corrected background thread
             threading.Thread(target=self.fetch_mod_info_for_tree, args=(item, mid, dt), daemon=True).start()
 
-        # Visual Tag Config
-        self.tree.tag_configure('active', foreground=BZ_GREEN)
-        self.tree.tag_configure('inactive', foreground="#666666")
+        self.update_tree_tags()
 
     def fetch_mod_info_for_tree(self, item, mid, local_date):
         """Fetches mod name and checks for updates by comparing local vs workshop dates."""
@@ -649,7 +802,7 @@ class BZModMaster:
             self.root.after(0, lambda: self.tree.set(item, "Name", f"ID: {mid} (Fetch Error)"))
 
     def launch_game(self):
-        exe = os.path.join(self.path_var.get(), "battlezone98redux.exe")
+        exe = os.path.join(self.path_var.get(), self.games[self.current_game_key]["exe"])
         if os.path.exists(exe):
             self.launch_btn.config(text="LAUNCHING...")
             subprocess.Popen([exe], cwd=self.path_var.get())
@@ -658,7 +811,9 @@ class BZModMaster:
             self.launch_btn.config(text="EXE MISSING")
             self.root.after(2000, lambda: self.launch_btn.config(text="LAUNCH GAME"))
     def auto_detect_gog(self):
-        for g_id in GOG_REG_IDS:
+        # Only auto-detect for BZ98R for now, or add BZCC IDs if known
+        gog_ids = ["1454067812", "1459427445"]
+        for g_id in gog_ids:
             for arch in ["SOFTWARE\\WOW6432Node", "SOFTWARE"]:
                 try:
                     reg = f"{arch}\\GOG.com\\Games\\{g_id}"
@@ -723,7 +878,7 @@ class BZModMaster:
 
     def refresh_list(self):
         """Scans SteamCMD cache and determines if mods are 'enabled' in the test folder."""
-        self.progress_label.config(text="SCANNING...", fg=BZ_CYAN)
+        self.progress_label.config(text="SCANNING...", fg=self.colors['accent'])
         self.image_cache.clear()
         self.progress.config(mode="indeterminate"); self.progress.start(10)
         
@@ -740,7 +895,8 @@ class BZModMaster:
             game_dir = os.path.abspath(game_path)
             
             # Correct nested SteamCMD structure
-            content_dir = os.path.join(base_cache, "steamapps", "workshop", "content", BZ98R_APPID)
+            current_appid = self.games[self.current_game_key]["appid"]
+            content_dir = os.path.join(base_cache, "steamapps", "workshop", "content", current_appid)
             game_mods_dir = os.path.join(game_dir, "mods")
             
             self.log("--- SCANNING FOR ASSETS ---", "info")
@@ -799,8 +955,7 @@ class BZModMaster:
 
             threading.Thread(target=self.fetch_mod_info_for_tree, args=(item, mid, m_time, status), daemon=True).start()
 
-        self.tree.tag_configure('active', foreground=BZ_GREEN)
-        self.tree.tag_configure('inactive', foreground="#666666")
+        self.root.after(0, self.update_tree_tags)
 
     def safe_tree_set(self, item, col, value):
         try:
@@ -902,7 +1057,8 @@ class BZModMaster:
         try:
             for mid in mods:
                 if self.stop_event.is_set(): break
-                src = os.path.join(cache_path, "steamapps", "workshop", "content", BZ98R_APPID, mid)
+                current_appid = self.games[self.current_game_key]["appid"]
+                src = os.path.join(cache_path, "steamapps", "workshop", "content", current_appid, mid)
                 dst = os.path.join(game_path, "mods", mid)
                 
                 try:
@@ -1011,7 +1167,8 @@ class BZModMaster:
                             self.log(f"Note: Could not remove link for {mid} during purge: {e}", "warning")
 
                     # 2. Delete Folder from cache
-                    mod_cache_path = os.path.join(cache_path, "steamapps/workshop/content", BZ98R_APPID, mid)
+                    current_appid = self.games[self.current_game_key]["appid"]
+                    mod_cache_path = os.path.join(cache_path, "steamapps/workshop/content", current_appid, mid)
                     try:
                         if os.path.exists(mod_cache_path):
                             shutil.rmtree(mod_cache_path)
