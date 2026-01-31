@@ -4,16 +4,27 @@ import re
 import json
 import shutil
 import zipfile
-import winreg
-import ctypes
 import subprocess
 import threading
 import urllib.request
+import platform
 from datetime import datetime
 from io import BytesIO
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import webbrowser
+from pathlib import Path
+
+# Platform-specific imports
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
+
+if IS_WINDOWS:
+    import winreg
+    import ctypes
+else:
+    winreg = None
+    ctypes = None
 
 # --- EXTERNAL LIBRARIES ---
 try:
@@ -149,6 +160,8 @@ class BZModMaster:
 
     def load_custom_fonts(self):
         self.available_fonts = []
+        if not IS_WINDOWS:
+            return  # Font loading not needed on Linux
         for key, g in self.games.items():
             font_path = os.path.join(self.resource_dir, g["font_file"])
             if os.path.exists(font_path):
@@ -745,9 +758,11 @@ class BZModMaster:
         return target
 
     def check_admin(self):
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            self.log("NOTICE: Non-Admin mode detected.", "error")
-            self.show_admin_warning()
+        if IS_WINDOWS and ctypes:
+            if not ctypes.windll.shell32.IsUserAnAdmin():
+                self.log("NOTICE: Non-Admin mode detected.", "error")
+                self.show_admin_warning()
+        # Linux doesn't need admin for symlinks
 
     def show_admin_warning(self):
         self.admin_frame = tk.Frame(self.dl_tab, bg="#330000", pady=2)
@@ -757,7 +772,7 @@ class BZModMaster:
         else:
             self.admin_frame.pack(side="top", fill="x", padx=10, pady=5)
             
-        lbl = tk.Label(self.admin_frame, text="⚠ ADMIN RIGHTS REQUIRED FOR SYMLINKS", 
+        lbl = tk.Label(self.admin_frame, text="⚠ ADMIN RIGHTS REQUIRED FOR JUNCTIONS", 
                        bg="#330000", fg="#ff5555", font=("Consolas", 10, "bold"))
         lbl.pack(side="left", padx=10)
         
@@ -936,18 +951,50 @@ class BZModMaster:
             self.launch_btn.config(text="EXE MISSING")
             self.root.after(2000, lambda: self.launch_btn.config(text="LAUNCH GAME"))
     def auto_detect_gog(self, verbose=False):
-        gog_ids = self.games[self.current_game_key].get("gog_ids", [])
-        for g_id in gog_ids:
-            for arch in ["SOFTWARE\\WOW6432Node", "SOFTWARE"]:
-                try:
-                    reg = f"{arch}\\GOG.com\\Games\\{g_id}"
-                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg, 0, winreg.KEY_READ | winreg.KEY_WOW64_32KEY)
-                    path, _ = winreg.QueryValueEx(key, "path")
-                    self.path_var.set(os.path.normpath(path)); self.save_config()
-                    if verbose: messagebox.showinfo("Success", f"Game found at:\n{path}")
-                    return
-                except: pass
-        if verbose: messagebox.showwarning("Not Found", "Could not automatically locate GOG installation.")
+        found_path = None
+        
+        if IS_WINDOWS and winreg:
+            # Windows: Check registry
+            gog_ids = self.games[self.current_game_key].get("gog_ids", [])
+            for g_id in gog_ids:
+                for arch in ["SOFTWARE\\WOW6432Node", "SOFTWARE"]:
+                    try:
+                        reg = f"{arch}\\GOG.com\\Games\\{g_id}"
+                        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg, 0, winreg.KEY_READ | winreg.KEY_WOW64_32KEY)
+                        path, _ = winreg.QueryValueEx(key, "path")
+                        found_path = os.path.normpath(path)
+                        break
+                    except: pass
+                if found_path: break
+        elif IS_LINUX:
+            # Linux: Check Heroic, Steam, and common GOG paths
+            home = Path.home()
+            game_exe = self.games[self.current_game_key]["exe"]
+            
+            candidates = [
+                # Heroic GOG installations
+                home / "Games" / "GOG" / "Battlezone 98 Redux",
+                home / "Games" / "Heroic" / "Battlezone 98 Redux",
+                # Steam installations
+                home / ".local" / "share" / "Steam" / "steamapps" / "common" / "Battlezone 98 Redux",
+                home / ".steam" / "steam" / "steamapps" / "common" / "Battlezone 98 Redux",
+                # Manual installations
+                home / "games" / "battlezone98redux",
+                home / ".wine" / "drive_c" / "GOG Games" / "Battlezone 98 Redux",
+            ]
+            
+            for path in candidates:
+                exe_path = path / game_exe
+                if exe_path.exists():
+                    found_path = str(path)
+                    break
+        
+        if found_path:
+            self.path_var.set(found_path)
+            self.save_config()
+            if verbose: messagebox.showinfo("Success", f"Game found at:\n{found_path}")
+        elif verbose:
+            messagebox.showwarning("Not Found", "Could not automatically locate GOG/Heroic installation.")
 
     def auto_detect_steamcmd(self, verbose=False):
         candidates = [
@@ -1201,9 +1248,15 @@ class BZModMaster:
                 try:
                     if not os.path.exists(os.path.dirname(dst)): os.makedirs(os.path.dirname(dst))
                     if os.path.lexists(dst): continue
-                    # Use Junction (/J) for best compatibility with game engines
-                    subprocess.run(f'mklink /J "{dst}" "{src}"', shell=True, check=True, capture_output=True)
-                    self.log(f"Mod {mid} enabled (Junction created).", "success")
+                    
+                    if IS_WINDOWS:
+                        # Use Junction (/J) for best compatibility with game engines
+                        subprocess.run(f'mklink /J "{dst}" "{src}"', shell=True, check=True, capture_output=True)
+                        self.log(f"Mod {mid} enabled (Junction created).", "success")
+                    else:
+                        # Linux: Use symbolic links
+                        os.symlink(src, dst, target_is_directory=True)
+                        self.log(f"Mod {mid} enabled (Symlink created).", "success")
                 except Exception as e:
                     self.log(f"Link Error for {mid}: {e}", "error")
         finally:
@@ -1227,12 +1280,16 @@ class BZModMaster:
                 
                 try:
                     if os.path.lexists(dst):
-                        # In Windows, 'os.rmdir' is the correct way to remove a Junction 
-                        # without deleting the contents of the source folder.
-                        if os.path.isdir(dst):
-                            os.rmdir(dst) 
+                        if IS_WINDOWS:
+                            # In Windows, 'os.rmdir' is the correct way to remove a Junction 
+                            # without deleting the contents of the source folder.
+                            if os.path.isdir(dst):
+                                os.rmdir(dst) 
+                            else:
+                                os.remove(dst) # Handle file symlinks
                         else:
-                            os.remove(dst) # Handle file symlinks
+                            # Linux: Remove symlink
+                            os.unlink(dst)
                         self.log(f"Mod {mid} decoupled from game engine.", "info")
                 except Exception as e:
                     self.log(f"DECOUPLE ERROR for {mid}: {e}", "error")
@@ -1240,8 +1297,11 @@ class BZModMaster:
             self.end_task(self.refresh_list if not self.stop_event.is_set() else None)
 
     def is_junction(self, path):
-        """Helper to detect if a directory is a Windows Junction."""
-        return bool(os.path.isdir(path) and (ctypes.windll.kernel32.GetFileAttributesW(path) & 0x400))
+        """Helper to detect if a directory is a Windows Junction or Linux symlink."""
+        if IS_WINDOWS and ctypes:
+            return bool(os.path.isdir(path) and (ctypes.windll.kernel32.GetFileAttributesW(path) & 0x400))
+        else:
+            return os.path.islink(path)
     def update_all_mods(self):
         """Batch triggers SteamCMD for every item currently in the list."""
         items = self.tree.get_children()
