@@ -1,13 +1,10 @@
-name: Build Windows EXE
+name: Build and Release
 
 on:
   push:
-    branches: [ "main", "master" ]
     tags:
-      - 'v*'
-  pull_request:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
+      - "v*"  # Triggers on tags like v1.0, v2.3.4
+  workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 permissions:
   contents: write
@@ -17,40 +14,33 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller pillow tkinterdnd2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install Pillow tkinterdnd2 pyinstaller
 
-    - name: Build EXE
-      run: |
-        pyinstaller build.spec
+      - name: Build Executable
+        # --collect-all tkinterdnd2 is crucial for the drag-and-drop library to work in the exe
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name "BZ98R Mod Manager" --icon "modman.ico" --add-data "modman.ico;." --add-data "bzone.ttf;." --collect-all tkinterdnd2 cmd.py
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: BZ98R_ModManager_EXE
-        path: dist/BZ98R_ModManager.exe
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BZ98R Mod Manager
+          path: dist/BZ98R Mod Manager.exe
 
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: dist/BZ98R_ModManager.exe
-
-    - name: Update Nightly Release
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: nightly
-        name: Nightly Build
-        prerelease: true
-        files: dist/BZ98R_ModManager.exe
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/BZ98R Mod Manager.exe
+          generate_release_notes: true
