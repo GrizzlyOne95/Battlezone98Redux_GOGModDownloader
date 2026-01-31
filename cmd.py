@@ -13,6 +13,7 @@ from datetime import datetime
 from io import BytesIO
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import webbrowser
 
 # --- EXTERNAL LIBRARIES ---
 try:
@@ -76,6 +77,7 @@ class BZModMaster:
             "BZ98R": {
                 "name": "Battlezone 98 Redux",
                 "appid": "301650",
+                "gog_ids": ["1454067812", "1459427445"],
                 "exe": "battlezone98redux.exe",
                 "font_file": "BZONE.ttf",
                 "font_name": "BZONE",
@@ -88,6 +90,7 @@ class BZModMaster:
             "BZCC": {
                 "name": "Battlezone Combat Commander",
                 "appid": "624970",
+                "gog_ids": ["1193046833"],
                 "exe": "battlezone2.exe",
                 "font_file": "BGM.ttf",
                 "font_name": "BankGothic",
@@ -273,6 +276,16 @@ class BZModMaster:
             ent.grid(row=row_idx, column=2, sticky="ew", padx=5)
             setattr(self, attr, ent) 
             ttk.Button(cfg, text="BROWSE", width=10, command=cmd).grid(row=row_idx, column=3, pady=2)
+            
+            if "Cache" in txt:
+                ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)).grid(row=row_idx, column=4, pady=2, padx=(0, 5))
+                ttk.Button(cfg, text="CLEAR", width=8, command=self.clear_cache).grid(row=row_idx, column=5, pady=2, padx=(0, 5))
+            elif "Game" in txt:
+                ttk.Button(cfg, text="DETECT", width=8, command=lambda: self.auto_detect_gog(verbose=True)).grid(row=row_idx, column=4, pady=2, padx=(0, 5))
+                ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)).grid(row=row_idx, column=5, pady=2, padx=(0, 5))
+            elif "Steam" in txt:
+                ttk.Button(cfg, text="DETECT", width=8, command=lambda: self.auto_detect_steamcmd(verbose=True)).grid(row=row_idx, column=4, pady=2, padx=(0, 5))
+                ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)).grid(row=row_idx, column=5, pady=2, padx=(0, 5))
         cfg.columnconfigure(2, weight=1)
 
         # Mod Queue (Preview & Input)
@@ -286,6 +299,8 @@ class BZModMaster:
         self.thumb_container = thumb_container # Ref for theme update
 
         self.thumb_label = tk.Label(thumb_container, bg="#050505")
+        self.thumb_label = tk.Label(thumb_container, bg="#050505", text="ADD MOD\nLINK OR ID", 
+                                  fg=self.colors['accent'], font=(self.current_font, 10, "bold"), wraplength=140)
         self.thumb_label.pack(expand=True, fill="both")
         
         info_frame = ttk.Frame(prev)
@@ -301,7 +316,16 @@ class BZModMaster:
         if HAS_DND:
             self.mod_entry.drop_target_register(DND_TEXT)
             self.mod_entry.dnd_bind('<<Drop>>', lambda e: self.mod_id_var.set(e.data.strip("{}")))
+            
+            self.thumb_label.drop_target_register(DND_TEXT)
+            self.thumb_label.dnd_bind('<<Drop>>', lambda e: self.mod_id_var.set(e.data.strip("{}")))
         self.mod_id_var.trace_add("write", self.on_input_change)
+
+        # Context Menu for Inputs
+        self.input_menu = tk.Menu(self.root, tearoff=0, bg="#1a1a1a", fg=self.colors['fg'])
+        self.input_menu.add_command(label="PASTE FROM CLIPBOARD", command=self.paste_from_clipboard)
+        self.thumb_label.bind("<Button-3>", self.show_input_menu)
+        self.mod_entry.bind("<Button-3>", self.show_input_menu)
 
         btn_row = ttk.Frame(info_frame)
         btn_row.pack(fill="x", pady=5)
@@ -309,11 +333,14 @@ class BZModMaster:
         self.dl_btn.pack(side="left", padx=(0, 5))
         self.launch_btn = ttk.Button(btn_row, text="LAUNCH GAME", command=self.launch_game)
         self.launch_btn.pack(side="left")
+        ttk.Button(btn_row, text="WORKSHOP", command=self.open_workshop).pack(side="left", padx=5)
         self.stop_btn = ttk.Button(btn_row, text="STOP", command=self.stop_operation, state="disabled")
         self.stop_btn.pack(side="left", padx=5)
 
         # HUD Log
-        ttk.Label(self.dl_tab, text=" HUD LOG ", foreground=self.colors['highlight'], font=(self.current_font, 11, "bold")).pack(anchor="w", padx=10)
+        # ttk.Label(self.dl_tab, text=" HUD LOG ", foreground=self.colors['highlight'], font=(self.current_font, 11, "bold")).pack(anchor="w", padx=10)
+        self.hud_log_label = ttk.Label(self.dl_tab, text=" HUD LOG ", foreground=self.colors['highlight'], font=(self.current_font, 11, "bold"))
+        self.hud_log_label.pack(anchor="w", padx=10)
         self.log_box = tk.Text(self.dl_tab, state="disabled", font=("Consolas", 10), bg="#050505", fg=self.colors['fg'], height=12)
         self.log_box.pack(fill="both", expand=True, padx=10, pady=5)
         
@@ -350,6 +377,12 @@ class BZModMaster:
         manage_ctrl.pack(fill="x", padx=10, pady=5)
         
         ttk.Button(manage_ctrl, text="CHECK FOR UPDATES", command=self.refresh_list).pack(side="left")
+        ttk.Button(manage_ctrl, text="SELECT ALL", command=self.select_all_mods).pack(side="left", padx=5)
+        
+        self.manage_help_lbl = tk.Label(manage_ctrl, text="?", width=2, bg="#222", fg=self.colors['accent'], font=("Consolas", 8, "bold"), cursor="hand2")
+        self.manage_help_lbl.pack(side="left", padx=10)
+        self.manage_help_tip = ToolTip(self.manage_help_lbl, "CONTROLS:\n• Double-Click: Toggle Enable/Disable\n• Right-Click: Context Menu\n• Drag/Shift+Click: Multi-Select", bg="#1a1a1a", fg=self.colors['accent'])
+
         ttk.Button(manage_ctrl, text="UPDATE ALL", command=self.update_all_mods).pack(side="right")
 
         # Context Menu
@@ -433,8 +466,15 @@ class BZModMaster:
         self.log_box.tag_config("info", foreground=c['accent'])
         
         self.mod_name_label.configure(foreground=c['accent'], font=(self.current_font, 11, "bold"))
+        self.hud_log_label.configure(foreground=c['highlight'], font=(self.current_font, 11, "bold"))
+        self.thumb_label.configure(fg=c['accent'], font=(self.current_font, 10, "bold"))
         self.thumb_container.configure(highlightbackground=c['dark_highlight'])
         self.mod_menu.configure(fg=c['fg'])
+        self.input_menu.configure(fg=c['fg'])
+        
+        if hasattr(self, 'manage_help_lbl'):
+            self.manage_help_lbl.configure(fg=c['accent'])
+            self.manage_help_tip.fg = c['accent']
         
         self.update_tree_tags()
         self.update_game_icon()
@@ -484,6 +524,21 @@ class BZModMaster:
             try: p.terminate()
             except: pass
 
+    def get_dependencies(self, mid):
+        """Scrapes the Steam Workshop page for required items."""
+        url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}"
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as r:
+                html = r.read().decode('utf-8')
+                # Look for the requiredItemsContainer block
+                block_match = re.search(r'<div class="requiredItemsContainer">(.+?)</div>', html, re.DOTALL)
+                if block_match:
+                    # Extract IDs from links like url?id=123456
+                    return list(set(re.findall(r'id=(\d+)', block_match.group(1))))
+        except: pass
+        return []
+
     def start_download(self):
         mid = self.sanitize_id(self.mod_id_var.get())
         if not mid: 
@@ -496,6 +551,17 @@ class BZModMaster:
             messagebox.showerror("Validation Error", "Target Mod ID does not belong to Battlezone 98 Redux.\nDownload Aborted.")
             return
 
+        # Dependency Check (Main Thread to allow MessageBox)
+        queue = [mid]
+        try:
+            self.dl_btn.config(text="CHECKING DEPS...")
+            self.root.update()
+            deps = self.get_dependencies(mid)
+            if deps:
+                if messagebox.askyesno("Dependencies Found", f"This mod requires {len(deps)} other items.\nDownload them as well?"):
+                    queue.extend(deps)
+        except: pass
+
         self.dl_btn.config(state="disabled", text="ENGINE ACTIVE")
         self.progress.config(mode="indeterminate")
         self.progress.start(10)
@@ -507,23 +573,29 @@ class BZModMaster:
         game_path = self.path_var.get()
         use_physical = self.use_physical_var.get()
         
-        threading.Thread(target=self.download_logic, args=(mid, sc_path, cache_path, game_path, use_physical), daemon=True).start()
+        threading.Thread(target=self.download_logic, args=(queue, sc_path, cache_path, game_path, use_physical), daemon=True).start()
 
-    def download_logic(self, mod_id, sc_path, cache_path, game_path, use_physical):
+    def download_logic(self, mod_ids, sc_path, cache_path, game_path, use_physical):
+        if isinstance(mod_ids, str): mod_ids = [mod_ids]
         try:
             current_appid = self.games[self.current_game_key]["appid"]
             final_sc_path = self.ensure_steamcmd(sc_path)
             cache = os.path.abspath(cache_path)
-            mod_path = os.path.join(cache, "steamapps/workshop/content", current_appid, mod_id)
             
-            if os.path.exists(mod_path):
-                self.log(f"Mod {mod_id} detected. Checking for updates...", "warning")
-            else:
-                self.log(f"Initializing new download for Mod {mod_id}...")
+            self.log(f"Batch processing {len(mod_ids)} items...", "info")
 
-            # FIX: force_install_dir BEFORE login
-            cmd = [final_sc_path, "+force_install_dir", cache, "+login", "anonymous",
-                   "+workshop_download_item", current_appid, mod_id, "+quit"]
+            # Build Batch Command
+            cmd = [final_sc_path, "+force_install_dir", cache, "+login", "anonymous"]
+            
+            for mid in mod_ids:
+                mod_path = os.path.join(cache, "steamapps/workshop/content", current_appid, mid)
+                if os.path.exists(mod_path):
+                    self.log(f"Queueing update: {mid}", "warning")
+                else:
+                    self.log(f"Queueing download: {mid}")
+                cmd.extend(["+workshop_download_item", current_appid, mid])
+            
+            cmd.append("+quit")
             
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             self.active_processes.append(p)
@@ -543,19 +615,22 @@ class BZModMaster:
             p.wait()
             if p in self.active_processes: self.active_processes.remove(p)
 
-            src = os.path.normpath(mod_path)
-            dst = os.path.normpath(os.path.join(game_path, "mods", mod_id))
+            # Process Links for all items
+            for mid in mod_ids:
+                src = os.path.normpath(os.path.join(cache, "steamapps/workshop/content", current_appid, mid))
+                dst = os.path.normpath(os.path.join(game_path, "mods", mid))
+                
+                if os.path.exists(src):
+                    if not os.path.exists(os.path.dirname(dst)): os.makedirs(os.path.dirname(dst))
+                    if use_physical:
+                        if os.path.exists(dst): shutil.rmtree(dst)
+                        shutil.copytree(src, dst)
+                    else:
+                        if not os.path.exists(dst): subprocess.run(f'mklink /J "{dst}" "{src}"', shell=True)
+                    self.log(f"Deployed: {mid}", "success")
             
-            if os.path.exists(src):
-                if not os.path.exists(os.path.dirname(dst)): os.makedirs(os.path.dirname(dst))
-                if use_physical:
-                    if os.path.exists(dst): shutil.rmtree(dst)
-                    shutil.copytree(src, dst)
-                else:
-                    if not os.path.exists(dst): subprocess.run(f'mklink /J "{dst}" "{src}"', shell=True)
-                self.log(f"Deployment complete: {mod_id}", "success")
-                self.root.after(0, lambda: self.dl_btn.config(text="DEPLOYED"))
-                self.root.after(3000, lambda: self.dl_btn.config(text="INSTALL MOD", state="normal"))
+            self.root.after(0, lambda: self.dl_btn.config(text="DEPLOYED"))
+            self.root.after(3000, lambda: self.dl_btn.config(text="INSTALL MOD", state="normal"))
             
         except Exception as e: self.log(f"CRITICAL: {e}", "error")
         finally:
@@ -576,7 +651,9 @@ class BZModMaster:
         mid = self.sanitize_id(self.mod_id_var.get())
         if mid and len(mid) >= 8:
             threading.Thread(target=self.fetch_preview, args=(mid,), daemon=True).start()
-
+    def open_workshop(self):
+        appid = self.games[self.current_game_key]["appid"]
+        webbrowser.open(f"https://steamcommunity.com/app/{appid}/workshop/")
     def fetch_preview(self, mid):
         try:
             url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}"
@@ -612,6 +689,14 @@ class BZModMaster:
     def update_thumb(self, photo):
         self.thumb_label.config(image=photo)
         self.thumb_label.image = photo 
+
+    def show_input_menu(self, event):
+        self.input_menu.post(event.x_root, event.y_root)
+
+    def paste_from_clipboard(self):
+        try:
+            self.mod_id_var.set(self.root.clipboard_get())
+        except: pass
 
     def sanitize_id(self, input_str):
         match = re.search(r'id=(\d+)', input_str)
@@ -693,7 +778,14 @@ class BZModMaster:
     def browse_game(self): 
         p = filedialog.askdirectory()
         if p:
-            self.path_var.set(os.path.normpath(p))
+            new_path = os.path.normpath(p)
+            cache_path = os.path.normpath(self.cache_var.get()) if self.cache_var.get() else ""
+            
+            if cache_path and new_path.lower() == cache_path.lower():
+                messagebox.showerror("Path Conflict", "Game Path cannot be the same as Mod Cache Path.\nPlease select a different folder.")
+                return
+
+            self.path_var.set(new_path)
             self.path_entry.configure(foreground=self.colors['accent']) # Reset color
             self.save_config()
             self.log(f"Game path updated: {p}", "success")
@@ -717,7 +809,40 @@ class BZModMaster:
                 self.save_config()
                 self.log(f"SteamCMD will be installed to: {p}", "info")
     def browse_cache(self): 
-        p = filedialog.askdirectory(); self.cache_var.set(os.path.normpath(p)); self.save_config()
+        p = filedialog.askdirectory()
+        if p:
+            new_path = os.path.normpath(p)
+            game_path = os.path.normpath(self.path_var.get()) if self.path_var.get() else ""
+            
+            if game_path and new_path.lower() == game_path.lower():
+                messagebox.showerror("Path Conflict", "Mod Cache Path cannot be the same as Game Path.\nPlease select a different folder.")
+                return
+
+            self.cache_var.set(new_path)
+            self.save_config()
+
+    def open_generic_folder(self, var):
+        path = var.get()
+        if not path: return
+        target = path
+        if os.path.isfile(target): target = os.path.dirname(target)
+        if os.path.exists(target): os.startfile(target)
+        else: messagebox.showinfo("Info", "Path does not exist.")
+
+    def clear_cache(self):
+        cache_path = self.cache_var.get()
+        if not os.path.exists(cache_path):
+            messagebox.showinfo("Cache Empty", "The cache folder does not exist.")
+            return
+
+        if messagebox.askyesno("Clear Cache", f"Are you sure you want to delete all files in:\n{cache_path}\n\nThis will force re-download of all mods."):
+            try:
+                shutil.rmtree(cache_path)
+                os.makedirs(cache_path)
+                self.log("Cache cleared successfully.", "success")
+                self.refresh_list()
+            except Exception as e:
+                self.log(f"Failed to clear cache: {e}", "error")
 
     def on_tab_change(self, event):
         """Triggers a refresh only when the Manage Mods tab is selected."""
@@ -810,19 +935,21 @@ class BZModMaster:
         else:
             self.launch_btn.config(text="EXE MISSING")
             self.root.after(2000, lambda: self.launch_btn.config(text="LAUNCH GAME"))
-    def auto_detect_gog(self):
-        # Only auto-detect for BZ98R for now, or add BZCC IDs if known
-        gog_ids = ["1454067812", "1459427445"]
+    def auto_detect_gog(self, verbose=False):
+        gog_ids = self.games[self.current_game_key].get("gog_ids", [])
         for g_id in gog_ids:
             for arch in ["SOFTWARE\\WOW6432Node", "SOFTWARE"]:
                 try:
                     reg = f"{arch}\\GOG.com\\Games\\{g_id}"
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg, 0, winreg.KEY_READ | winreg.KEY_WOW64_32KEY)
                     path, _ = winreg.QueryValueEx(key, "path")
-                    self.path_var.set(os.path.normpath(path)); self.save_config(); return
+                    self.path_var.set(os.path.normpath(path)); self.save_config()
+                    if verbose: messagebox.showinfo("Success", f"Game found at:\n{path}")
+                    return
                 except: pass
+        if verbose: messagebox.showwarning("Not Found", "Could not automatically locate GOG installation.")
 
-    def auto_detect_steamcmd(self):
+    def auto_detect_steamcmd(self, verbose=False):
         candidates = [
             os.path.join(self.bin_dir, "steamcmd.exe"),
             r"C:\steamcmd\steamcmd.exe",
@@ -834,7 +961,9 @@ class BZModMaster:
             if os.path.exists(p):
                 self.steamcmd_var.set(os.path.normpath(p))
                 self.save_config()
+                if verbose: messagebox.showinfo("Success", f"SteamCMD found at:\n{p}")
                 return
+        if verbose: messagebox.showwarning("Not Found", "Could not locate steamcmd.exe.\nPlease browse manually.")
                 
     def on_tab_change(self, event):
         """Auto-refreshes the list when the user clicks the Manage tab."""
@@ -876,6 +1005,9 @@ class BZModMaster:
                 self.tree.selection_set(item)
             self.mod_menu.post(event.x_root, event.y_root)
 
+    def select_all_mods(self):
+        self.tree.selection_set(self.tree.get_children())
+
     def refresh_list(self):
         """Scans SteamCMD cache and determines if mods are 'enabled' in the test folder."""
         self.progress_label.config(text="SCANNING...", fg=self.colors['accent'])
@@ -908,12 +1040,14 @@ class BZModMaster:
 
             if not os.path.exists(content_dir):
                 self.log(f"SCAN FAILED: No cache at {content_dir}", "error")
+                self.root.after(0, lambda: self._populate_tree([]))
                 return
 
             try:
                 mod_ids = [d for d in os.listdir(content_dir) if os.path.isdir(os.path.join(content_dir, d))]
                 self.log(f"Found {len(mod_ids)} assets in Steam cache.", "success")
             except:
+                self.root.after(0, lambda: self._populate_tree([]))
                 return
 
             # Collect data to pass back to UI thread
@@ -1012,14 +1146,17 @@ class BZModMaster:
                         # Clean string: "23 Oct, 2016 @ 3:47pm" -> remove @
                         clean_str = remote_date_str.replace("@", "").strip()
                         r_dt = None
-                        for fmt in ["%d %b, %Y %I:%M%p", "%d %b %I:%M%p"]:
+                        
+                        try:
+                            r_dt = datetime.strptime(clean_str, "%d %b, %Y %I:%M%p")
+                        except ValueError:
                             try:
-                                r_dt = datetime.strptime(clean_str, fmt)
-                                break
+                                # Append current year to avoid DeprecationWarning
+                                current_year = datetime.now().year
+                                r_dt = datetime.strptime(f"{clean_str} {current_year}", "%d %b %I:%M%p %Y")
                             except ValueError: pass
                         
                         if r_dt:
-                            if r_dt.year == 1900: r_dt = r_dt.replace(year=datetime.now().year)
                             l_dt = datetime.fromtimestamp(local_ts)
                             if r_dt.date() > l_dt.date():
                                 is_out_of_date = True
