@@ -9,7 +9,7 @@ A cross-platform tool to download and manage Steam Workshop mods for non-Steam v
 
 
 ## Features
-*   **Steam Workshop Integration**: Downloads mods using SteamCMD. No credentials or login are my needed. 
+*   **Steam Workshop Integration**: Downloads mods using SteamCMD. No credentials or login are needed. 
 *   **Multi-Game Support**: Supports both **Battlezone 98 Redux** and **Battlezone Combat Commander**.
 *   **Mod Management**: Enable, disable, update, or delete mods via a GUI.
 *   **Smart Linking**: Uses Windows Junctions or Linux symlinks to link mods to the game folder without duplicating files.
