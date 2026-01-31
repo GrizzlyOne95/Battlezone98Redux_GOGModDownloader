@@ -316,18 +316,20 @@ class BZModMaster:
                 self.root.after(0, lambda: self.stop_btn.config(state="normal"))
             self.task_count += 1
 
-    def end_task(self):
+    def end_task(self, callback=None):
         with self.task_lock:
             self.task_count -= 1
             if self.task_count <= 0:
                 self.task_count = 0
                 self.root.after(0, lambda: self.stop_btn.config(state="disabled"))
                 self.root.after(0, self.reset_progress)
+                if callback:
+                    self.root.after(1000, callback)
 
     def stop_operation(self):
         self.stop_event.set()
         self.log("Stopping operations...", "warning")
-        for p in self.active_processes:
+        for p in list(self.active_processes):
             try: p.terminate()
             except: pass
 
@@ -348,12 +350,18 @@ class BZModMaster:
         self.progress.start(10)
         self.progress_label.config(text="INITIALIZING...", fg=BZ_CYAN)
         self.start_task()
-        threading.Thread(target=self.download_logic, args=(mid,), daemon=True).start()
+        
+        sc_path = self.steamcmd_var.get()
+        cache_path = self.cache_var.get()
+        game_path = self.path_var.get()
+        use_physical = self.use_physical_var.get()
+        
+        threading.Thread(target=self.download_logic, args=(mid, sc_path, cache_path, game_path, use_physical), daemon=True).start()
 
-    def download_logic(self, mod_id):
+    def download_logic(self, mod_id, sc_path, cache_path, game_path, use_physical):
         try:
-            self.ensure_steamcmd()
-            cache = os.path.abspath(self.cache_var.get())
+            final_sc_path = self.ensure_steamcmd(sc_path)
+            cache = os.path.abspath(cache_path)
             mod_path = os.path.join(cache, "steamapps/workshop/content", BZ98R_APPID, mod_id)
             
             if os.path.exists(mod_path):
@@ -362,7 +370,7 @@ class BZModMaster:
                 self.log(f"Initializing new download for Mod {mod_id}...")
 
             # FIX: force_install_dir BEFORE login
-            cmd = [self.steamcmd_var.get(), "+force_install_dir", cache, "+login", "anonymous",
+            cmd = [final_sc_path, "+force_install_dir", cache, "+login", "anonymous",
                    "+workshop_download_item", BZ98R_APPID, mod_id, "+quit"]
             
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -384,11 +392,11 @@ class BZModMaster:
             if p in self.active_processes: self.active_processes.remove(p)
 
             src = os.path.normpath(mod_path)
-            dst = os.path.normpath(os.path.join(self.path_var.get(), "mods", mod_id))
+            dst = os.path.normpath(os.path.join(game_path, "mods", mod_id))
             
             if os.path.exists(src):
                 if not os.path.exists(os.path.dirname(dst)): os.makedirs(os.path.dirname(dst))
-                if self.use_physical_var.get():
+                if use_physical:
                     if os.path.exists(dst): shutil.rmtree(dst)
                     shutil.copytree(src, dst)
                 else:
@@ -397,11 +405,9 @@ class BZModMaster:
                 self.root.after(0, lambda: self.dl_btn.config(text="DEPLOYED"))
                 self.root.after(3000, lambda: self.dl_btn.config(text="INSTALL MOD", state="normal"))
             
-            if not self.stop_event.is_set():
-                self.root.after(0, self.refresh_list)
         except Exception as e: self.log(f"CRITICAL: {e}", "error")
         finally:
-            self.end_task()
+            self.end_task(self.refresh_list if not self.stop_event.is_set() else None)
 
     def update_progress(self, value):
         self.progress.stop()
@@ -479,11 +485,10 @@ class BZModMaster:
 
         self.log("Ready for mod deployment.", "info")
 
-    def ensure_steamcmd(self):
-        target = self.steamcmd_var.get()
+    def ensure_steamcmd(self, target):
         if not target:
             target = os.path.join(self.bin_dir, "steamcmd.exe")
-            self.steamcmd_var.set(target)
+            self.root.after(0, lambda: self.steamcmd_var.set(target))
             
         if not os.path.exists(target):
             target_dir = os.path.dirname(target)
@@ -498,6 +503,7 @@ class BZModMaster:
             except Exception as e:
                 self.log(f"SteamCMD Setup Error: {e}", "error")
                 raise e
+        return target
 
     def check_admin(self):
         if not ctypes.windll.shell32.IsUserAnAdmin():
@@ -722,17 +728,20 @@ class BZModMaster:
         self.progress.config(mode="indeterminate"); self.progress.start(10)
         
         # Offload file system scanning to a background thread
+        cache_path = self.cache_var.get()
+        game_path = self.path_var.get()
+        
         self.start_task()
-        threading.Thread(target=self._refresh_scan_logic, daemon=True).start()
+        threading.Thread(target=self._refresh_scan_logic, args=(cache_path, game_path), daemon=True).start()
 
-    def _refresh_scan_logic(self):
+    def _refresh_scan_logic(self, cache_path, game_path):
         try:
-            base_cache = os.path.abspath(self.cache_var.get())
-            game_path = os.path.abspath(self.path_var.get())
+            base_cache = os.path.abspath(cache_path)
+            game_dir = os.path.abspath(game_path)
             
             # Correct nested SteamCMD structure
             content_dir = os.path.join(base_cache, "steamapps", "workshop", "content", BZ98R_APPID)
-            game_mods_dir = os.path.join(game_path, "mods")
+            game_mods_dir = os.path.join(game_dir, "mods")
             
             self.log("--- SCANNING FOR ASSETS ---", "info")
 
@@ -883,15 +892,18 @@ class BZModMaster:
         
         # Extract data on main thread
         mods_to_enable = [str(self.tree.item(item)['values'][1]) for item in selected]
+        cache_path = self.cache_var.get()
+        game_path = self.path_var.get()
+        
         self.start_task()
-        threading.Thread(target=self._enable_mod_worker, args=(mods_to_enable,), daemon=True).start()
+        threading.Thread(target=self._enable_mod_worker, args=(mods_to_enable, cache_path, game_path), daemon=True).start()
 
-    def _enable_mod_worker(self, mods):
+    def _enable_mod_worker(self, mods, cache_path, game_path):
         try:
             for mid in mods:
                 if self.stop_event.is_set(): break
-                src = os.path.join(self.cache_var.get(), "steamapps", "workshop", "content", BZ98R_APPID, mid)
-                dst = os.path.join(self.path_var.get(), "mods", mid)
+                src = os.path.join(cache_path, "steamapps", "workshop", "content", BZ98R_APPID, mid)
+                dst = os.path.join(game_path, "mods", mid)
                 
                 try:
                     if not os.path.exists(os.path.dirname(dst)): os.makedirs(os.path.dirname(dst))
@@ -901,10 +913,8 @@ class BZModMaster:
                     self.log(f"Mod {mid} enabled (Junction created).", "success")
                 except Exception as e:
                     self.log(f"Link Error for {mid}: {e}", "error")
-            if not self.stop_event.is_set():
-                self.root.after(0, self.refresh_list)
         finally:
-            self.end_task()
+            self.end_task(self.refresh_list if not self.stop_event.is_set() else None)
 
     def disable_mod(self):
         """Disables all selected mods by removing their Junction links."""
@@ -912,14 +922,15 @@ class BZModMaster:
         if not selected: return
         
         mods_to_disable = [str(self.tree.item(item)['values'][1]) for item in selected]
+        game_path = self.path_var.get()
         self.start_task()
-        threading.Thread(target=self._disable_mod_worker, args=(mods_to_disable,), daemon=True).start()
+        threading.Thread(target=self._disable_mod_worker, args=(mods_to_disable, game_path), daemon=True).start()
 
-    def _disable_mod_worker(self, mods):
+    def _disable_mod_worker(self, mods, game_path):
         try:
             for mid in mods:
                 if self.stop_event.is_set(): break
-                dst = os.path.join(self.path_var.get(), "mods", mid)
+                dst = os.path.join(game_path, "mods", mid)
                 
                 try:
                     if os.path.lexists(dst):
@@ -932,10 +943,8 @@ class BZModMaster:
                         self.log(f"Mod {mid} decoupled from game engine.", "info")
                 except Exception as e:
                     self.log(f"DECOUPLE ERROR for {mid}: {e}", "error")
-            if not self.stop_event.is_set():
-                self.root.after(0, self.refresh_list)
         finally:
-            self.end_task()
+            self.end_task(self.refresh_list if not self.stop_event.is_set() else None)
 
     def is_junction(self, path):
         """Helper to detect if a directory is a Windows Junction."""
@@ -957,9 +966,15 @@ class BZModMaster:
             return
 
         self.log(f"Initializing batch update for {len(to_update)} mods...", "info")
+        
+        sc_path = self.steamcmd_var.get()
+        cache_path = self.cache_var.get()
+        game_path = self.path_var.get()
+        use_physical = self.use_physical_var.get()
+        
         for mid in to_update:
             self.start_task()
-            threading.Thread(target=self.download_logic, args=(mid,), daemon=True).start()
+            threading.Thread(target=self.download_logic, args=(mid, sc_path, cache_path, game_path, use_physical), daemon=True).start()
 
     def delete_mod_physically(self):
         """Wipes the selected mods from the SteamCMD cache and breaks any links."""
@@ -975,15 +990,17 @@ class BZModMaster:
 
         if messagebox.askyesno("TERMINATE ASSET(S)", prompt_message):
             mods_to_delete = [str(self.tree.item(item)['values'][1]) for item in selected]
+            cache_path = self.cache_var.get()
+            game_path = self.path_var.get()
             self.start_task()
-            threading.Thread(target=self._delete_mod_worker, args=(mods_to_delete,), daemon=True).start()
+            threading.Thread(target=self._delete_mod_worker, args=(mods_to_delete, cache_path, game_path), daemon=True).start()
 
-    def _delete_mod_worker(self, mods):
+    def _delete_mod_worker(self, mods, cache_path, game_path):
         try:
             for mid in mods:
                     if self.stop_event.is_set(): break
                     # 1. Break Link
-                    link_path = os.path.join(self.path_var.get(), "mods", mid)
+                    link_path = os.path.join(game_path, "mods", mid)
                     if os.path.lexists(link_path):
                         try:
                             if os.path.isdir(link_path):
@@ -994,18 +1011,16 @@ class BZModMaster:
                             self.log(f"Note: Could not remove link for {mid} during purge: {e}", "warning")
 
                     # 2. Delete Folder from cache
-                    cache_path = os.path.join(self.cache_var.get(), "steamapps/workshop/content", BZ98R_APPID, mid)
+                    mod_cache_path = os.path.join(cache_path, "steamapps/workshop/content", BZ98R_APPID, mid)
                     try:
-                        if os.path.exists(cache_path):
-                            shutil.rmtree(cache_path)
+                        if os.path.exists(mod_cache_path):
+                            shutil.rmtree(mod_cache_path)
                             self.log(f"Asset {mid} purged from local storage.", "warning")
                     except Exception as e:
                         self.log(f"Purge Error for {mid}: {e}", "error")
                 
-            if not self.stop_event.is_set():
-                self.root.after(0, self.refresh_list)
         finally:
-            self.end_task()
+            self.end_task(self.refresh_list if not self.stop_event.is_set() else None)
 
     def update_selected_mod(self, force=False):
         """Triggers a re-download via SteamCMD for the selected mods."""
@@ -1019,8 +1034,14 @@ class BZModMaster:
                 continue
 
             self.log(f"Updating mod {mid}...", "info")
+            
+            sc_path = self.steamcmd_var.get()
+            cache_path = self.cache_var.get()
+            game_path = self.path_var.get()
+            use_physical = self.use_physical_var.get()
+            
             self.start_task()
-            threading.Thread(target=self.download_logic, args=(mid,), daemon=True).start()
+            threading.Thread(target=self.download_logic, args=(mid, sc_path, cache_path, game_path, use_physical), daemon=True).start()
 if __name__ == "__main__":
     root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
     app = BZModMaster(root)
