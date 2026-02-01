@@ -2,10 +2,12 @@
 
 A cross-platform tool to download and manage Steam Workshop mods for non-Steam versions of Battlezone 98 Redux or Battlezone Combat Commander.
 
-<img width="1152" height="882" alt="image" src="https://github.com/user-attachments/assets/96ce052b-9391-4829-b358-eb26496fe3e8" />
+<img width="1727" height="1323" alt="image" src="https://github.com/user-attachments/assets/64e081e9-10d9-4913-b4e0-ddbf6ab77161" />
 
-<img width="1152" height="882" alt="image" src="https://github.com/user-attachments/assets/fb06ae01-2f95-4a86-8e69-e3dec221b72b" />
 
+<img width="1727" height="1323" alt="image" src="https://github.com/user-attachments/assets/f1bb25a5-0556-4811-a97e-380dca4a77b7" />
+
+<img width="1727" height="1323" alt="image" src="https://github.com/user-attachments/assets/e9e4b5a1-f72f-468a-882c-060898b340a9" />
 
 
 ## Features
