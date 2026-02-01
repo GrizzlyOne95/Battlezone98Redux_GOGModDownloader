@@ -132,6 +132,7 @@ class BZModMaster:
         self.root.configure(bg=self.colors["bg"])
 
         self.use_physical_var = tk.BooleanVar(value=self.config.get("use_physical", False))
+        self.advanced_mode_var = tk.BooleanVar(value=self.config.get("advanced_mode", False))
         
         # Load game-specific path or fallback to legacy global path
         saved_path = self.config.get(f"path_{self.current_game_key}", "")
@@ -156,6 +157,7 @@ class BZModMaster:
         
         if not self.path_var.get(): self.auto_detect_gog()
         if not self.steamcmd_var.get(): self.auto_detect_steamcmd()
+        self.toggle_ui_mode()
         threading.Thread(target=self.initialize_engine, daemon=True).start()
 
     def load_custom_fonts(self):
@@ -216,6 +218,7 @@ class BZModMaster:
         self.config["steamcmd_path"] = self.steamcmd_var.get()
         self.config["cache_path"] = self.cache_var.get()
         self.config["use_physical"] = self.use_physical_var.get()
+        self.config["advanced_mode"] = self.advanced_mode_var.get()
 
         # Convert paths to relative for storage
         storage_config = self.config.copy()
@@ -251,7 +254,8 @@ class BZModMaster:
         # Game Switcher Row
         game_row = ttk.Frame(cfg)
         game_row.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
-        ttk.Label(game_row, text="TARGET GAME:", font=(self.current_font, 12, "bold")).pack(side="left")
+        self.target_game_label = ttk.Label(game_row, text="TARGET GAME:", font=(self.current_font, 12, "bold"))
+        self.target_game_label.pack(side="left")
         
         game_names = [g["name"] for g in self.games.values()]
         self.game_selector = ttk.Combobox(game_row, values=game_names, state="readonly", width=40)
@@ -264,6 +268,9 @@ class BZModMaster:
             
         self.game_selector.pack(side="left", padx=10)
         self.game_selector.bind("<<ComboboxSelected>>", self.switch_game)
+
+        ttk.Checkbutton(game_row, text="Advanced Mode", variable=self.advanced_mode_var, 
+                       command=self.toggle_ui_mode).pack(side="right", padx=10)
 
         self.icon_label = tk.Label(game_row, bg=self.colors["bg"])
         self.icon_label.pack(side="left", padx=5)
@@ -279,26 +286,46 @@ class BZModMaster:
              "Location where mods are downloaded locally before being linked to the game.")
         ]
 
+        self.path_ui_elements = []
         for i, (txt, var, cmd, attr, tip) in enumerate(paths):
             row_idx = i + 1
-            ttk.Label(cfg, text=txt).grid(row=row_idx, column=0, sticky="w")
+            widgets = {'default_text': txt}
+            
+            l = ttk.Label(cfg, text=txt)
+            l.grid(row=row_idx, column=0, sticky="w")
+            widgets['label'] = l
+            
             h_lbl = tk.Label(cfg, text="?", width=2, bg="#222", fg=self.colors['accent'], font=("Consolas", 8, "bold"), cursor="hand2")
             h_lbl.grid(row=row_idx, column=1, padx=(0, 5))
             ToolTip(h_lbl, tip, bg="#1a1a1a", fg=self.colors['accent'])
+            widgets['help'] = h_lbl
+            
             ent = ttk.Entry(cfg, textvariable=var)
             ent.grid(row=row_idx, column=2, sticky="ew", padx=5)
             setattr(self, attr, ent) 
-            ttk.Button(cfg, text="BROWSE", width=10, command=cmd).grid(row=row_idx, column=3, pady=2)
+            widgets['entry'] = ent
             
+            b = ttk.Button(cfg, text="BROWSE", width=10, command=cmd)
+            b.grid(row=row_idx, column=3, pady=2)
+            widgets['browse'] = b
+            
+            extras = []
             if "Cache" in txt:
-                ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)).grid(row=row_idx, column=4, pady=2, padx=(0, 5))
-                ttk.Button(cfg, text="CLEAR", width=8, command=self.clear_cache).grid(row=row_idx, column=5, pady=2, padx=(0, 5))
+                extras.append(ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)))
+                extras.append(ttk.Button(cfg, text="CLEAR", width=8, command=self.clear_cache))
             elif "Game" in txt:
-                ttk.Button(cfg, text="DETECT", width=8, command=lambda: self.auto_detect_gog(verbose=True)).grid(row=row_idx, column=4, pady=2, padx=(0, 5))
-                ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)).grid(row=row_idx, column=5, pady=2, padx=(0, 5))
+                extras.append(ttk.Button(cfg, text="DETECT", width=8, command=lambda: self.auto_detect_gog(verbose=True)))
+                extras.append(ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)))
             elif "Steam" in txt:
-                ttk.Button(cfg, text="DETECT", width=8, command=lambda: self.auto_detect_steamcmd(verbose=True)).grid(row=row_idx, column=4, pady=2, padx=(0, 5))
-                ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)).grid(row=row_idx, column=5, pady=2, padx=(0, 5))
+                extras.append(ttk.Button(cfg, text="DETECT", width=8, command=lambda: self.auto_detect_steamcmd(verbose=True)))
+                extras.append(ttk.Button(cfg, text="OPEN", width=8, command=lambda v=var: self.open_generic_folder(v)))
+            
+            for idx, btn in enumerate(extras):
+                btn.grid(row=row_idx, column=4 + idx, pady=2, padx=(0, 5))
+            
+            widgets['extras'] = extras
+            self.path_ui_elements.append(widgets)
+            
         cfg.columnconfigure(2, weight=1)
 
         # Mod Queue (Preview & Input)
@@ -322,7 +349,8 @@ class BZModMaster:
         self.mod_name_label = ttk.Label(info_frame, text="READY FOR COMMAND", foreground=self.colors['accent'], font=(self.current_font, 11, "bold"))
         self.mod_name_label.pack(anchor="w", pady=(0, 5))
         
-        ttk.Label(info_frame, text="MOD URL OR ID:", font=(self.current_font, 8)).pack(anchor="w")
+        self.mod_url_label = ttk.Label(info_frame, text="MOD URL OR ID:", font=(self.current_font, 8))
+        self.mod_url_label.pack(anchor="w")
         self.mod_entry = ttk.Entry(info_frame, textvariable=self.mod_id_var)
         self.mod_entry.pack(fill="x", pady=5)
         
@@ -346,14 +374,19 @@ class BZModMaster:
         self.dl_btn.pack(side="left", padx=(0, 5))
         self.launch_btn = ttk.Button(btn_row, text="LAUNCH GAME", command=self.launch_game)
         self.launch_btn.pack(side="left")
-        ttk.Button(btn_row, text="WORKSHOP", command=self.open_workshop).pack(side="left", padx=5)
+        self.workshop_btn = ttk.Button(btn_row, text="WORKSHOP", command=self.open_workshop)
+        self.workshop_btn.pack(side="left", padx=5)
         self.stop_btn = ttk.Button(btn_row, text="STOP", command=self.stop_operation, state="disabled")
         self.stop_btn.pack(side="left", padx=5)
 
         # HUD Log
-        # ttk.Label(self.dl_tab, text=" HUD LOG ", foreground=self.colors['highlight'], font=(self.current_font, 11, "bold")).pack(anchor="w", padx=10)
-        self.hud_log_label = ttk.Label(self.dl_tab, text=" HUD LOG ", foreground=self.colors['highlight'], font=(self.current_font, 11, "bold"))
-        self.hud_log_label.pack(anchor="w", padx=10)
+        log_header = ttk.Frame(self.dl_tab)
+        log_header.pack(fill="x", padx=10, pady=(5, 0))
+        
+        self.hud_log_label = ttk.Label(log_header, text=" HUD LOG ", foreground=self.colors['highlight'], font=(self.current_font, 11, "bold"))
+        self.hud_log_label.pack(side="left")
+        ttk.Button(log_header, text="CLEAR", width=8, command=self.clear_hud_log).pack(side="right")
+        
         self.log_box = tk.Text(self.dl_tab, state="disabled", font=("Consolas", 10), bg="#050505", fg=self.colors['fg'], height=12)
         self.log_box.pack(fill="both", expand=True, padx=10, pady=5)
         
@@ -408,6 +441,60 @@ class BZModMaster:
         self.mod_menu.add_command(label="DELETE FROM DISK", command=self.delete_mod_physically)
 
         self.update_tree_tags()
+
+    def toggle_ui_mode(self):
+        advanced = self.advanced_mode_var.get()
+        
+        # 0: Game Path, 1: SteamCMD, 2: Cache
+        self.set_row_visibility(0, show_row=advanced, simple=not advanced)
+        self.set_row_visibility(1, show_row=advanced, simple=not advanced)
+        self.set_row_visibility(2, show_row=True, simple=not advanced)
+        
+        # Update Cache Label
+        cache_widgets = self.path_ui_elements[2]
+        cache_widgets['label'].config(text="Download Folder:" if not advanced else cache_widgets['default_text'])
+
+        # Update Simple Mode Texts
+        if not advanced:
+            self.thumb_label.config(text="DRAG MOD LINK HERE\nOR COPY/PASTE")
+            self.mod_url_label.config(text="PASTE WORKSHOP LINK HERE:")
+        else:
+            self.thumb_label.config(text="ADD MOD\nLINK OR ID")
+            self.mod_url_label.config(text="MOD URL OR ID:")
+
+        # Buttons
+        if not advanced:
+            self.workshop_btn.pack_forget()
+            self.launch_btn.pack_forget()
+            self.stop_btn.pack_forget()
+        else:
+            # Repack to ensure order
+            for btn in [self.dl_btn, self.launch_btn, self.workshop_btn, self.stop_btn]:
+                btn.pack_forget()
+            self.dl_btn.pack(side="left", padx=(0, 5))
+            self.launch_btn.pack(side="left")
+            self.workshop_btn.pack(side="left", padx=5)
+            self.stop_btn.pack(side="left", padx=5)
+
+    def set_row_visibility(self, index, show_row, simple):
+        widgets = self.path_ui_elements[index]
+        if show_row:
+            widgets['label'].grid()
+            widgets['entry'].grid()
+            widgets['browse'].grid()
+            
+            if simple:
+                widgets['help'].grid_remove()
+                for w in widgets['extras']: w.grid_remove()
+            else:
+                widgets['help'].grid()
+                for w in widgets['extras']: w.grid()
+        else:
+            widgets['label'].grid_remove()
+            widgets['entry'].grid_remove()
+            widgets['browse'].grid_remove()
+            widgets['help'].grid_remove()
+            for w in widgets['extras']: w.grid_remove()
 
     def update_styles(self, style):
         main_font = (self.current_font, 10)
@@ -481,6 +568,8 @@ class BZModMaster:
         self.mod_name_label.configure(foreground=c['accent'], font=(self.current_font, 11, "bold"))
         self.hud_log_label.configure(foreground=c['highlight'], font=(self.current_font, 11, "bold"))
         self.thumb_label.configure(fg=c['accent'], font=(self.current_font, 10, "bold"))
+        self.target_game_label.configure(font=(self.current_font, 12, "bold"))
+        self.mod_url_label.configure(font=(self.current_font, 8))
         self.thumb_container.configure(highlightbackground=c['dark_highlight'])
         self.mod_menu.configure(fg=c['fg'])
         self.input_menu.configure(fg=c['fg'])
@@ -496,11 +585,25 @@ class BZModMaster:
         self.initialize_engine()
         self.refresh_list()
         self.save_config()
+        
+        if self.mod_id_var.get():
+            self.is_valid_mod = False
+            self.mod_name_label.config(text="VALIDATING...", foreground=c['fg'])
+            self.on_input_change()
+
+    def clear_hud_log(self):
+        self.log_box.config(state="normal")
+        self.log_box.delete("1.0", "end")
+        self.log_box.config(state="disabled")
 
     def log(self, message, tag=None):
         self.root.after(0, lambda: self._log_impl(message, tag))
 
     def _log_impl(self, message, tag=None):
+        # Simple Mode Filter: Only show tagged messages (Success, Warning, Error, Info)
+        if not self.advanced_mode_var.get() and tag is None:
+            return
+
         self.log_box.config(state="normal")
         ts = datetime.now().strftime("[%H:%M:%S] ")
         self.log_box.insert("end", ts, "timestamp")
@@ -539,18 +642,52 @@ class BZModMaster:
 
     def get_dependencies(self, mid):
         """Scrapes the Steam Workshop page for required items."""
-        url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}"
+        url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}&l=english"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req) as r:
                 html = r.read().decode('utf-8')
-                # Look for the requiredItemsContainer block
-                block_match = re.search(r'<div class="requiredItemsContainer">(.+?)</div>', html, re.DOTALL)
-                if block_match:
-                    # Extract IDs from links like url?id=123456
-                    return list(set(re.findall(r'id=(\d+)', block_match.group(1))))
-        except: pass
+                
+                # Robustly find the requiredItemsContainer block by counting divs
+                start_match = re.search(r'<div[^>]*class="requiredItemsContainer"[^>]*>', html)
+                if start_match:
+                    start_idx = start_match.end()
+                    balance = 1
+                    idx = start_idx
+                    
+                    while balance > 0 and idx < len(html):
+                        next_open = html.find('<div', idx)
+                        next_close = html.find('</div>', idx)
+                        
+                        if next_close == -1: break
+                        
+                        if next_open != -1 and next_open < next_close:
+                            balance += 1
+                            idx = next_open + 4
+                        else:
+                            balance -= 1
+                            idx = next_close + 6
+                            
+                    block = html[start_idx:idx]
+                    return list(set(re.findall(r'id=(\d+)', block)))
+        except Exception as e:
+            self.log(f"Dependency Check Failed: {e}", "warning")
+            pass
         return []
+
+    def update_batch_progress(self, item_percent, completed_count, total_items):
+        if total_items == 0: return
+        item_percent = min(100.0, max(0.0, item_percent))
+        total_percent = ((completed_count * 100.0) + item_percent) / total_items
+        
+        self.progress.stop()
+        self.progress.config(mode="determinate", value=total_percent)
+        
+        if completed_count == total_items:
+            self.progress_label.config(text="100% - COMPLETE")
+        else:
+            self.progress_label.config(text=f"{int(total_percent)}% (Item {completed_count + 1}/{total_items})")
+            self.dl_btn.config(text=f"DL {completed_count + 1}/{total_items} ({int(item_percent)}%)")
 
     def start_download(self):
         mid = self.sanitize_id(self.mod_id_var.get())
@@ -561,7 +698,8 @@ class BZModMaster:
         
         # FINAL GATEKEEPER: Check validation flag
         if hasattr(self, 'is_valid_mod') and not self.is_valid_mod:
-            messagebox.showerror("Validation Error", "Target Mod ID does not belong to Battlezone 98 Redux.\nDownload Aborted.")
+            current_game_name = self.games[self.current_game_key]["name"]
+            messagebox.showerror("Validation Error", f"Target Mod ID does not belong to {current_game_name}.\nDownload Aborted.")
             return
 
         # Dependency Check (Main Thread to allow MessageBox)
@@ -595,7 +733,15 @@ class BZModMaster:
             final_sc_path = self.ensure_steamcmd(sc_path)
             cache = os.path.abspath(cache_path)
             
-            self.log(f"Batch processing {len(mod_ids)} items...", "info")
+            # Force SteamCMD to use English to ensure regex matching works
+            sc_dir = os.path.dirname(final_sc_path)
+            console_cfg = os.path.join(sc_dir, "SteamConsole.txt")
+            if not os.path.exists(console_cfg):
+                with open(console_cfg, "w") as f:
+                    f.write('@Language "english"\n')
+
+            total_items = len(mod_ids)
+            self.log(f"Batch processing {total_items} items...", "info")
 
             # Build Batch Command
             cmd = [final_sc_path, "+force_install_dir", cache, "+login", "anonymous"]
@@ -605,26 +751,43 @@ class BZModMaster:
                 if os.path.exists(mod_path):
                     self.log(f"Queueing update: {mid}", "warning")
                 else:
-                    self.log(f"Queueing download: {mid}")
+                    self.log(f"Queueing download: {mid}", "info")
                 cmd.extend(["+workshop_download_item", current_appid, mid])
             
             cmd.append("+quit")
             
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW)
             self.active_processes.append(p)
             
-            for line in p.stdout:
+            completed_count = 0
+            
+            while True:
                 if self.stop_event.is_set():
                     p.terminate()
                     break
+                line = p.stdout.readline()
+                if not line:
+                    break
+                
                 clean = line.strip()
                 if clean:
-                    self.log(clean)
-                    if "Verifying" in clean: self.root.after(0, lambda: self.dl_btn.config(text="VERIFYING..."))
-                    percent_match = re.search(r'\((\d+\.\d+)%\)', clean)
-                    if percent_match:
-                        val = float(percent_match.group(1))
-                        self.root.after(0, lambda v=val: self.update_progress(v))
+                    # Regex for SteamCMD progress: "progress: 23.45"
+                    progress_match = re.search(r'progress:\s*(\d+\.\d+)', clean)
+                    
+                    if "Success. Downloaded item" in clean:
+                        completed_count += 1
+                        self.log(f"Success: {clean.split('item')[-1].strip()} ({completed_count}/{total_items})", "success")
+                        self.root.after(0, lambda c=completed_count, t=total_items: self.update_batch_progress(0, c, t))
+                    elif "Error" in clean or "Failed" in clean:
+                        self.log(clean, "error")
+                    elif progress_match:
+                        val = float(progress_match.group(1))
+                        self.root.after(0, lambda v=val, c=completed_count, t=total_items: self.update_batch_progress(v, c, t))
+                    elif "Verifying" in clean:
+                        self.root.after(0, lambda c=completed_count, t=total_items: self.dl_btn.config(text=f"VERIFYING {c+1}/{t}..."))
+                    elif "Update state" not in clean:
+                        self.log(clean)
+
             p.wait()
             if p in self.active_processes: self.active_processes.remove(p)
 
@@ -669,7 +832,7 @@ class BZModMaster:
         webbrowser.open(f"https://steamcommunity.com/app/{appid}/workshop/")
     def fetch_preview(self, mid):
         try:
-            url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}"
+            url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}&l=english"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req) as r:
                 html = r.read().decode('utf-8')
@@ -835,6 +998,14 @@ class BZModMaster:
 
             self.cache_var.set(new_path)
             self.save_config()
+            
+            # In Simple Mode, if Game Path is missing, prompt for it now
+            if not self.advanced_mode_var.get():
+                game_path = self.path_var.get()
+                exe_name = self.games[self.current_game_key]["exe"]
+                if not game_path or not os.path.exists(os.path.join(game_path, exe_name)):
+                    messagebox.showinfo("Game Location Required", "Please select your Game Installation folder so mods can be installed.")
+                    self.browse_game()
 
     def open_generic_folder(self, var):
         path = var.get()
@@ -1165,7 +1336,7 @@ class BZModMaster:
     def fetch_mod_info_for_tree(self, item, mid, local_ts, base_status):
         """Fetches mod name and checks for updates."""
         try:
-            url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}"
+            url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mid}&l=english"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req) as r:
                 html = r.read().decode('utf-8')
@@ -1194,14 +1365,28 @@ class BZModMaster:
                         clean_str = remote_date_str.replace("@", "").strip()
                         r_dt = None
                         
+                        # Manual English Month Map to bypass OS Locale issues
+                        months = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,
+                                  "Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
+                        
                         try:
-                            r_dt = datetime.strptime(clean_str, "%d %b, %Y %I:%M%p")
-                        except ValueError:
-                            try:
-                                # Append current year to avoid DeprecationWarning
-                                current_year = datetime.now().year
-                                r_dt = datetime.strptime(f"{clean_str} {current_year}", "%d %b %I:%M%p %Y")
-                            except ValueError: pass
+                            # Parse: "23 Oct, 2016 3:47pm"
+                            parts = clean_str.replace(",", "").split()
+                            day = int(parts[0])
+                            month = months.get(parts[1], 1)
+                            
+                            # Handle missing year (current year)
+                            if ":" in parts[2]: # Format: 23 Oct 3:47pm
+                                year = datetime.now().year
+                                time_str = parts[2]
+                            else: # Format: 23 Oct 2016 3:47pm
+                                year = int(parts[2])
+                                time_str = parts[3]
+                                
+                            # Construct a locale-independent string for strptime
+                            dt_str = f"{year}-{month:02d}-{day:02d} {time_str}"
+                            r_dt = datetime.strptime(dt_str, "%Y-%m-%d %I:%M%p")
+                        except Exception: pass
                         
                         if r_dt:
                             l_dt = datetime.fromtimestamp(local_ts)
